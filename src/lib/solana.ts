@@ -7,9 +7,11 @@
  *   - RPC failure is stale, never zero.
  *   - Unknown/unpriced/spam tokens are labelled, not silently excluded.
  *
- * In this MVP environment, if no RPC endpoint is configured, the client
- * surfaces an honest "boundary" state — it does NOT fabricate balances.
+ * Signature verification is now wired (lib/solana-verify.ts).
+ * RPC queries are wired (lib/solana-rpc.ts).
  */
+
+import { verifyWalletSignature as realVerifySignature, type VerifyResult as RealVerifyResult } from "./solana-verify";
 
 export type SolanaConfig = {
   rpcUrl: string | null;
@@ -19,7 +21,7 @@ export type SolanaConfig = {
 export function getSolanaConfig(): SolanaConfig {
   const rpcUrl = process.env.SOLANA_RPC_URL || null;
   const cluster =
-    (process.env.SOLANA_CLUSTER as SolanaConfig["cluster"]) || "devnet";
+    (process.env.SOLANA_CLUSTER as SolanaConfig["cluster"]) || "mainnet-beta";
   return { rpcUrl, cluster };
 }
 
@@ -59,7 +61,7 @@ export function createWalletChallenge(opts: {
   ttlMs?: number;
 }): { nonce: string; message: string; expiresAt: Date } {
   const ttlMs = opts.ttlMs ?? 1000 * 60 * 5; // 5 min
-  const nonce = randomBytes(32).toString("hex");
+  const nonce = randomBytesHex(32);
   const expiresAt = new Date(Date.now() + ttlMs);
   const message = [
     "Rillio Wallet Verification",
@@ -73,41 +75,61 @@ export function createWalletChallenge(opts: {
   return { nonce, message, expiresAt };
 }
 
-// Inline import to avoid top-level crypto import collision
-import { randomBytes } from "crypto";
-
 /**
- * Verify a signed challenge. In MVP without an onchain library configured,
- * we accept the connection but mark the wallet as "unverified" and surface
- * that state clearly in the UI. A verified path would call
- * nacl.sign.detached.verify with the wallet's public key.
+ * Verify a signed challenge. Now delegates to lib/solana-verify.ts which
+ * performs real ed25519 verification via tweetnacl.
  *
- * For now, this returns verification=false and the UI shows an explicit
- * "Signature verification not configured" badge rather than fabricating trust.
+ * If no signature is provided (e.g. browser doesn't have a signer wired),
+ * we return verified=false with a clear reason. The wallet is still saved
+ * but marked unverified.
  */
 export type VerifyResult =
-  | { ok: true; address: string; verified: true }
-  | { ok: true; address: string; verified: false; reason: string }
-  | { ok: false; reason: string };
+  | { ok: true; address: string; verified: true; reason: "signature_valid" }
+  | { ok: true; address: string; verified: false; reason: string; code: string }
+  | { ok: false; reason: string; code: string };
 
 export function verifyWalletSignature(opts: {
   address: string;
   signature: string | null;
-  expectedNonce: string;
-  expectedDomain: string;
+  message: string;
 }): VerifyResult {
   if (!opts.address) {
-    return { ok: false, reason: "Missing wallet address." };
+    return { ok: false, reason: "Missing wallet address.", code: "MISSING_ADDRESS" };
   }
-  // In a fully wired MVP we would verify the signature cryptographically.
-  // Until that path is configured, we accept the connection but DO NOT
-  // mark it as verified. The UI must surface this honestly.
+
+  // If signature absent, accept connection as unverified
+  if (!opts.signature) {
+    return {
+      ok: true,
+      address: opts.address,
+      verified: false,
+      reason: "No signature provided. Wallet connected as unverified.",
+      code: "NO_SIGNATURE",
+    };
+  }
+
+  // Delegate to real cryptographic verification (lib/solana-verify.ts)
+  const result = realVerifySignature({
+    address: opts.address,
+    signature: opts.signature,
+    message: opts.message,
+  });
+
+  if (!result.ok) {
+    return {
+      ok: true, // We still accept the connection
+      address: opts.address,
+      verified: false,
+      reason: result.reason,
+      code: result.code ?? "VERIFICATION_FAILED",
+    };
+  }
+
   return {
     ok: true,
     address: opts.address,
-    verified: false,
-    reason:
-      "Cryptographic signature verification is not enabled in this environment. Wallet is connected for read-only indexing but not verified as owned by the user.",
+    verified: true,
+    reason: "signature_valid",
   };
 }
 
@@ -118,4 +140,18 @@ export function verifyWalletSignature(opts: {
 export function isValidSolanaAddress(address: string): boolean {
   if (!address) return false;
   return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+}
+
+function randomBytesHex(n: number): string {
+  const bytes = new Uint8Array(n);
+  // Use crypto.getRandomValues in browser-ish environments, or Node crypto
+  if (typeof globalThis.crypto !== "undefined" && globalThis.crypto.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nodeCrypto = require("crypto");
+    const buf = nodeCrypto.randomBytes(n);
+    bytes.set(buf);
+  }
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }

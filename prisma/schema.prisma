@@ -32,6 +32,14 @@ model User {
   categorizationRules     CategorizationRule[]
   cashflowSnapshots       CashflowSnapshot[]
   goals                   Goal[]
+  financialConnections    FinancialConnection[]
+  providerCredentials    ProviderCredential[]
+  subscriptions           Subscription[]
+  checkoutSessions        CheckoutSession[]
+  invoices                Invoice[]
+  paymentIntents          PaymentIntent[]
+  paymentSettlements      PaymentSettlement[]
+  entitlements            Entitlement[]
   wallets                 Wallet[]
   portfolioSnapshots      PortfolioSnapshot[]
   consents                Consent[]
@@ -351,4 +359,193 @@ model AuditEvent {
 
   @@index([resourceType, resourceId, createdAt])
   @@index([userId, createdAt])
+}
+
+// ============================================================
+// Phase 2 additions — bank providers, billing, payments
+// ============================================================
+
+model FinancialConnection {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  provider        String   // e.g. "demo", "plaid", "teller"
+  externalId      String?  // provider-side item id
+  status          String   @default("active") // active | syncing | error | revoked
+  accountsJson    String?  // JSON-encoded list of {id, label, currency}
+  lastSyncAt      DateTime?
+  lastSyncStatus  String?  // ok | partial | failed
+  lastSyncError   String?
+  syncCount       Int      @default(0)
+  revokedAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  credential      ProviderCredential?
+
+  @@unique([userId, provider, externalId])
+  @@index([userId, status])
+}
+
+model ProviderCredential {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  connection      FinancialConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  connectionId    String   @unique
+  // Encrypted credential reference (e.g. access_token ciphertext). Never plaintext.
+  ciphertext      String
+  iv              String
+  algorithm       String   @default("aes-256-gcm")
+  rotationDueAt   DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Plan {
+  id              String   @id @default(cuid())
+  code            String   @unique  // "free" | "plus"
+  name            String
+  description     String?
+  priceMinor      BigInt   @default(0)
+  currency        String   @default("USD")
+  interval        String   @default("month") // month | year
+  featuresJson    String   // JSON-encoded feature list
+  isActive        Boolean  @default(true)
+  stripePriceId   String?
+  usdcRecipient   String?  // for USDC checkout
+  createdAt       DateTime @default(now())
+
+  subscriptions   Subscription[]
+  checkoutSessions CheckoutSession[]
+}
+
+model CheckoutSession {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  plan            Plan     @relation(fields: [planId], references: [id])
+  planId          String
+  provider        String   // stripe | usdc
+  externalId      String?  // Stripe session id or USDC reference
+  idempotencyKey  String?
+  status          String   @default("open") // open | completed | expired | failed
+  amountMinor     BigInt
+  currency        String
+  returnUrl       String?
+  metadata        String?  // JSON-encoded
+  createdAt       DateTime @default(now())
+  completedAt     DateTime?
+
+  subscription    Subscription?
+
+  @@index([userId, createdAt])
+  @@index([externalId])
+}
+
+model Subscription {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  plan            Plan     @relation(fields: [planId], references: [id])
+  planId          String
+  provider        String   // stripe | usdc | free
+  externalId      String?  // Stripe subscription id
+  status          String   @default("active") // active | trialing | past_due | canceled | paused
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAt          DateTime?
+  canceledAt        DateTime?
+  checkoutSession   CheckoutSession? @relation(fields: [checkoutSessionId], references: [id])
+  checkoutSessionId String? @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  invoices        Invoice[]
+  entitlements    Entitlement[]
+
+  @@index([userId, status])
+}
+
+model Invoice {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  subscriptionId  String
+  providerInvoiceId String?
+  amountMinor     BigInt
+  currency        String
+  state           String   @default("open") // open | paid | void | uncollectible
+  paidAt          DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model PaymentIntent {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  reference       String   @unique // stable id used in USDC transfer memo / Stripe reference
+  payer           String?  // wallet address for USDC
+  recipient       String   // wallet address for USDC
+  mint            String?  // USDC mint
+  amountMinor     BigInt   // exact expected amount in token base units
+  currency        String   @default("USD")
+  expiry          DateTime
+  status          String   @default("pending") // pending | confirmed | failed | expired
+  metadata        String?
+  createdAt       DateTime @default(now())
+  confirmedAt     DateTime?
+
+  settlements     PaymentSettlement[]
+
+  @@index([userId, status])
+}
+
+model PaymentSettlement {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  intent          PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
+  intentId        String
+  signature       String   @unique // onchain signature (USDC) or Stripe charge id
+  verifiedAmountMinor BigInt
+  verifiedMint    String?
+  verifiedRecipient String?
+  finality        String   // confirmed | finalized | reverted
+  reconciledAt    DateTime @default(now())
+
+  @@index([intentId])
+}
+
+model Entitlement {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  feature         String   // e.g. "csv_import_limit", "multi_account", "scenario_planning"
+  value           String   // e.g. "100000", "true", "false"
+  source          String   // subscription | plan_default | promotional
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id])
+  subscriptionId  String?
+  effectiveFrom   DateTime @default(now())
+  effectiveUntil  DateTime?
+  createdAt       DateTime @default(now())
+
+  @@unique([userId, feature])
+  @@index([userId, effectiveUntil])
+}
+
+model IdempotencyKey {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  scope           String
+  requestHash     String
+  responseRef     String?
+  status          Int      @default(200)
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([scope, key])
 }

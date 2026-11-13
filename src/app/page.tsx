@@ -9,6 +9,8 @@ import { HomeView } from "@/components/rillio/home-view";
 import { ActivityView } from "@/components/rillio/activity-view";
 import { GoalsView } from "@/components/rillio/goals-view";
 import { PortfolioView } from "@/components/rillio/portfolio-view";
+import { ConnectionsView } from "@/components/rillio/connections-view";
+import { BillingView } from "@/components/rillio/billing-view";
 import { SettingsView } from "@/components/rillio/settings-view";
 import { RillioMark, RillioWordmark } from "@/components/rillio/icons";
 import {
@@ -20,10 +22,12 @@ import {
   LogOut,
   Bell,
   Menu,
+  Plug,
+  CreditCard,
 } from "lucide-react";
 import { toast } from "sonner";
 
-type View = "home" | "activity" | "goals" | "portfolio" | "settings";
+type View = "home" | "activity" | "goals" | "portfolio" | "connections" | "billing" | "settings";
 
 export default function Page() {
   const [user, setUser] = useState<Session | null>(null);
@@ -48,6 +52,29 @@ export default function Page() {
   useEffect(() => {
     refreshMe();
   }, [refreshMe]);
+
+  // Handle deep-link query params (?view=billing&billing=return)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get("view");
+    if (v && ["home", "activity", "goals", "portfolio", "connections", "billing", "settings"].includes(v)) {
+      setView(v as View);
+      const billing = params.get("billing");
+      if (billing) {
+        if (billing === "return") {
+          setTimeout(() => toast.info("Checkout complete. Verifying webhook…", { description: "If Plus isn't active yet, the webhook is still processing." }), 500);
+        } else if (billing === "cancelled") {
+          toast.warning("Checkout cancelled.");
+        } else if (billing === "verification_failed") {
+          toast.error("Checkout verification failed.");
+        }
+      }
+      // Clean URL
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, "", newUrl);
+    }
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -83,6 +110,8 @@ export default function Page() {
     { id: "activity", label: "Activity", icon: <ListChecks size={18} />, badge: counts.transactions || undefined },
     { id: "goals", label: "Goals", icon: <Target size={18} />, badge: counts.goals || undefined },
     { id: "portfolio", label: "Portfolio", icon: <Wallet size={18} />, badge: counts.wallets || undefined },
+    { id: "connections", label: "Connections", icon: <Plug size={18} /> },
+    { id: "billing", label: "Billing", icon: <CreditCard size={18} /> },
     { id: "settings", label: "Settings", icon: <Settings size={18} /> },
   ];
 
@@ -174,6 +203,8 @@ export default function Page() {
           {view === "activity" && <ActivityView user={user} />}
           {view === "goals" && <GoalsView user={user} />}
           {view === "portfolio" && <PortfolioView user={user} />}
+          {view === "connections" && <ConnectionsView onNavigate={(v) => setView(v as View)} />}
+          {view === "billing" && <BillingView />}
           {view === "settings" && <SettingsView user={user} onSignOut={signOut} />}
         </div>
 

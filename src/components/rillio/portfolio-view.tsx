@@ -12,7 +12,88 @@ import { apiFetch } from "@/lib/api-client";
 import { formatMinor, formatTokenAmount } from "@/lib/money";
 import { OrbitIcon, ShieldIcon, SourceIcon } from "@/components/rillio/icons";
 import { toast } from "sonner";
-import { Wallet as WalletIcon, Trash2, ExternalLink, AlertCircle } from "lucide-react";
+import { Wallet as WalletIcon, Trash2, ExternalLink, AlertCircle, RefreshCw } from "lucide-react";
+
+// Browser wallet adapter abstraction (Wallet Standard / window.solana / window.phantom)
+type WalletAdapter = {
+  name: string;
+  connect: () => Promise<{ address: string }>;
+  signMessage: (message: string) => Promise<string>;
+  disconnect?: () => Promise<void>;
+};
+
+type AnyWindow = typeof window & {
+  solana?: { isPhantom?: boolean; connect: () => Promise<{ publicKey: { toString: () => string } }>; signMessage: (data: Uint8Array, display: string) => Promise<Uint8Array> };
+  phantom?: { solana?: AnyWindow["solana"] };
+  Backpack?: { connect: () => Promise<{ publicKey: { toString: () => string } }>; signMessage: (data: Uint8Array) => Promise<Uint8Array> } & Record<string, unknown>;
+  solflare?: { connect: () => Promise<{ publicKey: { toString: () => string } }>; signMessage: (data: Uint8Array) => Promise<Uint8Array> };
+};
+
+function detectWalletAdapters(): WalletAdapter[] {
+  if (typeof window === "undefined") return [];
+  const w = window as AnyWindow;
+  const adapters: WalletAdapter[] = [];
+  const solana = w.solana || w.phantom?.solana;
+  if (solana && typeof solana.connect === "function") {
+    adapters.push({
+      name: "Phantom",
+      connect: async () => {
+        const res = await solana.connect();
+        return { address: res.publicKey.toString() };
+      },
+      signMessage: async (message: string) => {
+        const data = new TextEncoder().encode(message);
+        const sig = await solana.signMessage(data, "utf8");
+        // Convert bytes to base58
+        return bytesToBase58(sig);
+      },
+    });
+  }
+  if (w.solflare && typeof w.solflare.connect === "function") {
+    adapters.push({
+      name: "Solflare",
+      connect: async () => {
+        const res = await w.solflare!.connect();
+        return { address: res.publicKey.toString() };
+      },
+      signMessage: async (message: string) => {
+        const data = new TextEncoder().encode(message);
+        const sig = await w.solflare!.signMessage(data);
+        return bytesToBase58(sig);
+      },
+    });
+  }
+  if (w.Backpack && typeof w.Backpack.connect === "function") {
+    adapters.push({
+      name: "Backpack",
+      connect: async () => {
+        const res = await (w.Backpack as { connect: () => Promise<{ publicKey: { toString: () => string } }> }).connect();
+        return { address: res.publicKey.toString() };
+      },
+      signMessage: async (message: string) => {
+        const data = new TextEncoder().encode(message);
+        const sig = await (w.Backpack as { signMessage: (data: Uint8Array) => Promise<Uint8Array> }).signMessage(data);
+        return bytesToBase58(sig);
+      },
+    });
+  }
+  return adapters;
+}
+
+// Convert Uint8Array to base58 string (matches Solana wallet signature encoding)
+function bytesToBase58(bytes: Uint8Array): string {
+  const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let num = BigInt("0x" + Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join(""));
+  let str = "";
+  while (num > 0n) {
+    const rem = num % 58n;
+    num = num / 58n;
+    str = ALPHABET[Number(rem)] + str;
+  }
+  // Leading zero bytes → "1"
+  for (let i = 0; i < bytes.length && bytes[i] === 0; i++) str = "1" + str;
+  return str;
+}
 
 type Boundary = { kind: "ok" | "not_configured"; reason?: string; guidance?: string; cluster?: string; rpcUrl?: string };
 
@@ -71,6 +152,20 @@ export function PortfolioView({ user }: { user: { baseCurrency: string; displayN
   const [connectOpen, setConnectOpen] = useState(false);
   const [address, setAddress] = useState("");
   const [connecting, setConnecting] = useState(false);
+  const [walletAdapter, setWalletAdapter] = useState<WalletAdapter | null>(null);
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
+
+  // Detect Solana wallet adapters in the browser (Wallet Standard / window.solana / window.phantom)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const poll = () => {
+      const adapters = detectWalletAdapters();
+      if (adapters.length > 0) setWalletAdapter(adapters[0]);
+    };
+    poll();
+    const t = setInterval(poll, 1500);
+    return () => clearInterval(t);
+  }, []);
 
   async function load() {
     setLoading(true);
@@ -91,39 +186,102 @@ export function PortfolioView({ user }: { user: { baseCurrency: string; displayN
   useEffect(() => { load(); }, []);
 
   async function connect() {
-    if (!address) {
-      toast.error("Enter a Solana wallet address.");
-      return;
-    }
     setConnecting(true);
     try {
-      // Issue challenge
-      const challenge = await apiFetch<{ message: string; nonce: string; expiresAt: string; boundary: Boundary }>(
-        "/api/wallets/challenge",
-        { method: "POST", body: JSON.stringify({ address }) }
-      );
-      // In MVP without a wallet signing library in the browser, we submit the
-      // challenge without a cryptographic signature. The backend records the
-      // wallet as "unverified" — and the UI surfaces that honestly.
-      const verify = await apiFetch<{ wallet: Wallet; verified: boolean; verificationReason: string | null; boundary: Boundary }>(
-        "/api/wallets/verify",
-        { method: "POST", body: JSON.stringify({ address, signature: null, nonce: challenge.nonce, message: challenge.message }) }
-      );
-      if (verify.verified) {
-        toast.success("Wallet connected and verified.");
-      } else {
-        toast.warning("Wallet connected as unverified.", {
-          description: verify.verificationReason ?? undefined,
-        });
+      let walletAddress = address;
+      let signature: string | null = null;
+      let message = "";
+
+      // If a browser wallet adapter is available, use it to connect + sign
+      if (walletAdapter) {
+        toast.info(`Connecting to ${walletAdapter.name}…`);
+        const conn = await walletAdapter.connect();
+        walletAddress = conn.address;
+        setAddress(conn.address);
+
+        // Issue challenge from server
+        const challenge = await apiFetch<{ message: string; nonce: string; expiresAt: string; boundary: Boundary }>(
+          "/api/wallets/challenge",
+          { method: "POST", body: JSON.stringify({ address: walletAddress }) }
+        );
+        message = challenge.message;
+        // Ask the wallet to sign the challenge
+        try {
+          const sig = await walletAdapter.signMessage(challenge.message);
+          signature = sig; // base58 or base64
+          toast.info("Signature obtained. Verifying onchain…");
+        } catch (e) {
+          // User declined signature — proceed as unverified
+          toast.warning("Signature declined. Wallet will be connected as unverified.");
+          signature = null;
+        }
+      } else if (!address) {
+        toast.error("No browser wallet detected. Enter a Solana address manually to connect as unverified, or install Phantom/Solflare.");
+        return;
       }
-      setConnectOpen(false);
-      setAddress("");
-      load();
+
+      // Issue challenge if not already issued (manual address path)
+      if (!message) {
+        const challenge = await apiFetch<{ message: string; nonce: string; expiresAt: string; boundary: Boundary }>(
+          "/api/wallets/challenge",
+          { method: "POST", body: JSON.stringify({ address: walletAddress }) }
+        );
+        message = challenge.message;
+        const verify = await apiFetch<{ wallet: Wallet; verified: boolean; verificationReason: string | null; boundary: Boundary; observation?: { error?: string; triggered?: boolean } }>(
+          "/api/wallets/verify",
+          { method: "POST", body: JSON.stringify({ address: walletAddress, signature: null, nonce: challenge.nonce, message: challenge.message }) }
+        );
+        handleVerifyResult(verify);
+        return;
+      }
+
+      const nonceMatch = message.match(/Nonce: ([a-f0-9]+)/);
+      const nonce = nonceMatch ? nonceMatch[1] : "";
+      const verify = await apiFetch<{ wallet: Wallet; verified: boolean; verificationReason: string | null; boundary: Boundary; observation?: { error?: string; triggered?: boolean } }>(
+        "/api/wallets/verify",
+        { method: "POST", body: JSON.stringify({ address: walletAddress, signature, nonce, message }) }
+      );
+      handleVerifyResult(verify);
     } catch (e) {
       const err = e as Error;
       toast.error(err.message);
     } finally {
       setConnecting(false);
+    }
+  }
+
+  function handleVerifyResult(verify: { wallet: Wallet; verified: boolean; verificationReason: string | null; boundary: Boundary; observation?: { error?: string; triggered?: boolean } }) {
+    if (verify.verified) {
+      toast.success("Wallet connected and verified by ed25519 signature.");
+    } else {
+      toast.warning("Wallet connected as unverified.", {
+        description: verify.verificationReason ?? undefined,
+      });
+    }
+    if (verify.observation?.error) {
+      toast.error("Portfolio observation failed.", { description: verify.observation.error });
+    } else if (verify.observation?.triggered && verify.boundary.kind === "ok") {
+      toast.success("Real balances fetched from Solana RPC.");
+    }
+    setConnectOpen(false);
+    setAddress("");
+    load();
+  }
+
+  async function refreshWallet(id: string) {
+    setRefreshingId(id);
+    try {
+      const res = await apiFetch<{ ok: boolean; stale: boolean; error: string | null; pricedAssetCount: number; unpricedAssetCount: number; totalUsdMinor: string | null; observedAt: string }>(`/api/wallets/${id}/refresh`, { method: "POST" });
+      if (res.ok) {
+        toast.success(`Refreshed. ${res.pricedAssetCount} priced, ${res.unpricedAssetCount} unpriced.`);
+      } else {
+        toast.warning("Refresh returned stale data.", { description: res.error ?? undefined });
+      }
+      load();
+    } catch (e) {
+      toast.error("Refresh failed.");
+    } finally {
+      setRefreshingId(null);
     }
   }
 
@@ -277,6 +435,16 @@ export function PortfolioView({ user }: { user: { baseCurrency: string; displayN
                     </a>
                     <Button
                       size="sm"
+                      variant="outline"
+                      onClick={() => refreshWallet(w.id)}
+                      disabled={refreshingId === w.id || boundary?.kind === "not_configured"}
+                      className="border-white/10 h-8"
+                    >
+                      <RefreshCw size={12} className={refreshingId === w.id ? "mr-1 animate-spin" : "mr-1"} />
+                      {refreshingId === w.id ? "" : "Refresh"}
+                    </Button>
+                    <Button
+                      size="sm"
                       variant="ghost"
                       className="text-danger-500 hover:text-danger-500"
                       onClick={() => disconnect(w.id)}
@@ -331,23 +499,51 @@ export function PortfolioView({ user }: { user: { baseCurrency: string; displayN
             <div className="rounded-lg p-3 bg-mint-400/10 border border-mint-400/30 flex items-start gap-2">
               <ShieldIcon size={16} className="text-mint-400 flex-shrink-0 mt-0.5" />
               <div className="text-xs text-slate-300">
-                Rillio requests a short-lived, domain-bound signing challenge to verify wallet ownership. In this MVP environment, cryptographic verification is not configured — your wallet will be marked <strong>unverified</strong> and clearly labelled as such.
+                Rillio requests a short-lived, domain-bound signing challenge. We verify the signature cryptographically using ed25519 (tweetnacl). If no browser wallet is detected, you can paste an address manually — it will be marked <strong>unverified</strong> and clearly labelled.
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="addr">Solana wallet address</Label>
-              <Input
-                id="addr"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="7xKXtg2CW87d97TXJSDpbD5jBkheTqA83eZRuhxJYgQk"
-                className="bg-ink-850 border-white/10 font-mono text-sm"
-              />
-              <p className="text-xs text-slate-500">Paste a base58 Solana address (32–44 characters).</p>
-            </div>
-            <Button onClick={connect} disabled={connecting || !address} className="w-full bg-lime-400 text-ink-950 hover:bg-lime-400/90">
-              {connecting ? "Connecting…" : "Connect read-only"}
-            </Button>
+
+            {walletAdapter && (
+              <div className="rounded-lg p-3 bg-mint-400/10 border border-mint-400/30">
+                <div className="text-xs text-mint-400 font-medium mb-1">Browser wallet detected</div>
+                <p className="text-xs text-slate-300">
+                  {walletAdapter.name} is available. Click connect to request a signed challenge — your private key never leaves your wallet.
+                </p>
+              </div>
+            )}
+
+            {!walletAdapter && (
+              <div className="rounded-lg p-3 bg-warning-500/10 border border-warning-500/30">
+                <div className="text-xs text-warning-500 font-medium mb-1">No browser wallet detected</div>
+                <p className="text-xs text-slate-300">
+                  Install Phantom, Solflare, or Backpack to verify wallet ownership cryptographically. You can still connect an address manually as <strong>unverified</strong>.
+                </p>
+              </div>
+            )}
+
+            {walletAdapter ? (
+              <Button onClick={connect} disabled={connecting} className="w-full bg-lime-400 text-ink-950 hover:bg-lime-400/90">
+                <WalletIcon size={14} className="mr-1.5" />
+                {connecting ? "Connecting…" : `Connect with ${walletAdapter.name}`}
+              </Button>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="addr">Solana wallet address (manual)</Label>
+                  <Input
+                    id="addr"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="7xKXtg2CW87d97TXJSDpbD5jBkheTqA83eZRuhxJYgQk"
+                    className="bg-ink-850 border-white/10 font-mono text-sm"
+                  />
+                  <p className="text-xs text-slate-500">Paste a base58 Solana address (32–44 characters). Will be marked unverified.</p>
+                </div>
+                <Button onClick={connect} disabled={connecting || !address} className="w-full bg-lime-400 text-ink-950 hover:bg-lime-400/90">
+                  {connecting ? "Connecting…" : "Connect as unverified"}
+                </Button>
+              </>
+            )}
           </div>
         </SheetContent>
       </Sheet>
