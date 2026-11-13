@@ -83,17 +83,32 @@ export function parseCsv(content: string): { rows: CsvRow[]; headers: string[] }
     }
   }
 
-  const records = csvParse(normalized, {
-    delimiter,
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-    bom: true,
-    relax_column_count: true,
-  }) as CsvRow[];
+  try {
+    const records = csvParse(normalized, {
+      delimiter,
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      bom: true,
+      relax_column_count: true,
+      // Malformed quoting in a bank export must surface as a rejected import,
+      // not crash the request (blueprint §9.4: never show a stack trace).
+      relax_quotes: true,
+    }) as CsvRow[];
 
-  const headers = records.length > 0 ? Object.keys(records[0]) : [];
-  return { rows: records, headers };
+    const headers = records.length > 0 ? Object.keys(records[0]) : [];
+    return { rows: records, headers };
+  } catch (err) {
+    throw new CsvParseError(err instanceof Error ? err.message : "Unparseable CSV.");
+  }
+}
+
+/** Raised when the CSV cannot be parsed at all (as opposed to rejected rows). */
+export class CsvParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CsvParseError";
+  }
 }
 
 function countUnquoted(line: string, delim: string): number {
@@ -291,13 +306,44 @@ export function sanitizeCell(s: string): string {
   return cleaned;
 }
 
-/** Compute deterministic fingerprint for dedupe (blueprint §4.2 FR-DATA-005). */
+/**
+ * Compute the deterministic dedupe fingerprint for a normalized row.
+ *
+ * Blueprint §4.2 FR-DATA-005: "provider IDs preferred; otherwise deterministic
+ * fingerprint with collision safeguards." The same function MUST be used by
+ * the import pipeline and by whatever persists the fingerprint, or re-imports
+ * will not be recognised as duplicates.
+ *
+ * Shape: `${YYYY-MM-DD}|${amountMinor}|${normalizedDescription}|${account}`
+ */
 export function fingerprint(row: NormalizedRow): string | null {
   if (!row.occurredAt || row.amountMinor === null) return null;
-  const date = row.occurredAt.toISOString().slice(0, 10);
-  const amount = row.amountMinor.toString();
-  const desc = (row.description || "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120);
-  const account = (row.account || "default").toLowerCase();
+  return fingerprintParts({
+    occurredAt: row.occurredAt,
+    amountMinor: row.amountMinor,
+    description: row.description,
+    account: row.account,
+  });
+}
+
+/**
+ * Build a fingerprint from raw parts. Used by the API route so it can never
+ * drift from the pipeline's definition.
+ */
+export function fingerprintParts(input: {
+  occurredAt: Date;
+  amountMinor: Minor;
+  description: string;
+  account: string;
+}): string {
+  const date = input.occurredAt.toISOString().slice(0, 10);
+  const amount = input.amountMinor.toString();
+  const desc = (input.description || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+  const account = (input.account || "default").toLowerCase();
   return createHash("sha256")
     .update(`${date}|${amount}|${desc}|${account}`)
     .digest("hex");

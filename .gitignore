@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# local npm cache (redirected here by .npmrc because C: is full)
+.npm-cache/
 
 # vercel
 .vercel

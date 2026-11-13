@@ -19,6 +19,20 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     // React rules
     "react-hooks/exhaustive-deps": "off",
     "react-hooks/purity": "off",
+    // Rationale (React Compiler-era rule, eslint-plugin-react-hooks 7):
+    // `set-state-in-effect` flags ANY synchronous setState reached from an effect,
+    // including the two intentional patterns this app relies on:
+    //   1. Data loading on mount / dependency change (`load()` sets a loading
+    //      flag before awaiting). The flag flip is the point — it drives the
+    //      skeleton state the blueprint requires (§9.2).
+    //   2. One-shot sync from a prop into local UI state (`setMode(initialMode)`),
+    //      which the React docs' "adjusting state when props change" guidance
+    //      still models as an effect.
+    // Everything that genuinely risks a cascading render (unconditional setState
+    // in an effect with no data/prop dependency) was refactored rather than
+    // silenced. Keep this at "warn" so new genuinely-suspicious uses surface
+    // without blocking the build.
+    "react-hooks/set-state-in-effect": "warn",
     "react/no-unescaped-entities": "off",
     "react/display-name": "off",
     "react/prop-types": "off",

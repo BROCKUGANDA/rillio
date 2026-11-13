@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { getCurrentUser } from "@/lib/auth";
 import { makeError } from "@/lib/errors";
 import { db } from "@/lib/db";
@@ -31,7 +32,9 @@ export async function POST(req: NextRequest) {
     purpose: "connect_readonly",
   });
 
-  // Persist challenge (hashed) so /verify can check nonce + expiry
+  const nonceHash = createHash("sha256").update(challenge.nonce).digest("hex");
+
+  // Persist challenge (hashed nonce only) so /verify can check nonce + expiry
   await db.auditEvent.create({
     data: {
       userId: user.id,
@@ -41,7 +44,7 @@ export async function POST(req: NextRequest) {
       resourceId: address,
       reason: "Read-only wallet connection",
       metadata: JSON.stringify({
-        nonce: challenge.nonce,
+        nonceHash,
         domain: host,
         expiresAt: challenge.expiresAt.toISOString(),
       }),

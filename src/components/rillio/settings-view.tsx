@@ -166,7 +166,7 @@ export function SettingsView({
                 ))}
               </div>
             )}
-            {lastExport && (
+            {lastExport != null && (
               <details className="mt-3">
                 <summary className="text-xs text-mint-400 cursor-pointer">Preview export JSON</summary>
                 <pre className="mt-2 p-2 bg-ink-950 rounded text-[10px] overflow-x-auto max-h-40 font-mono text-slate-300">

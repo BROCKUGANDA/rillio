@@ -47,12 +47,21 @@ export function parseDecimalToMinor(
   if (!s) return null;
 
   const decimals = decimalsFor(currency);
-  const isNegative = /^[-(]/.test(s);
-  // Strip parentheses, minus AND plus signs — many bank exports prefix
-  // positive amounts with "+" (e.g. "+4200.00" for payroll credits).
-  s = s.replace(/[()-]/g, "");
-  s = s.replace(/\+/g, "");
-  s = s.replace(/\s/g, "");
+
+  // Detect an accounting-negative before stripping decoration: "(1,234.56)",
+  // "$ (1,234.56)", "-1,234.56" and "-$1,234.56" all mean a negative amount.
+  const isNegative =
+    /^\(.*\)$/.test(s) || // (1,234.56)
+    /^\s*-/.test(s) || // -1,234.56 | -$1,234.56
+    /^[^\d(]*\(/.test(s); // $ (1,234.56) — symbol then a parenthesised amount
+
+  // Strip currency symbols, spaces (incl. non-breaking), parentheses, minus AND
+  // plus signs — many bank exports prefix positive amounts with "+"
+  // (e.g. "+4200.00" for payroll credits).
+  s = s.replace(/[$€£¥₹₦₩]/g, "");
+  s = s.replace(/[()]/g, "");
+  s = s.replace(/^[+-]/, "");
+  s = s.replace(/[\s\u00A0\u202F']/g, "");
 
   // Detect both thousand and decimal separators
   const hasComma = s.includes(",");
@@ -92,7 +101,12 @@ export function parseDecimalToMinor(
       intPart = parts[0];
       fracPart = parts[1];
     } else if (parts.length > 2) {
-      // Multiple dots — likely thousands separators
+      // Multiple dots — only valid as thousands separators when every group
+      // after the first is exactly 3 digits ("1.234.567"). Anything else
+      // ("12.3.4") is ambiguous and rejected rather than guessed.
+      const groups = parts.slice(1);
+      const allGroupsAreTriples = groups.every((g) => g.length === 3);
+      if (!allGroupsAreTriples) return null;
       intPart = parts.join("");
     } else {
       intPart = s;
@@ -101,12 +115,15 @@ export function parseDecimalToMinor(
     intPart = s;
   }
 
-  if (intPart === "" || intPart === "-" || isNaN(Number(intPart))) {
-    if (!intPart && !fracPart) return null;
-    if (isNaN(Number(intPart || "0"))) return null;
+  // Reject anything that is not a plain positive integer at this point.
+  // An empty integer part is fine only when it is a bare decimal (".5"), which
+  // we normalise to "0.5"; otherwise an unparseable value is rejected.
+  if (intPart === "") {
+    if (fracPart) intPart = "0";
+    else return null;
   }
-
-  if (!intPart) intPart = "0";
+  if (!/^\d+$/.test(intPart)) return null;
+  if (fracPart && !/^\d+$/.test(fracPart)) return null;
 
   // Pad/truncate fractional part to currency decimals
   if (fracPart) {

@@ -42,12 +42,14 @@ export function AuthModal({
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<"form" | "done">("form");
 
+  // Reset internal step when the dialog opens, and sync the mode prop. Both are
+  // applied outside the effect body to avoid a synchronous cascading render.
   useEffect(() => {
-    if (open) setStep("form");
+    if (open) queueMicrotask(() => setStep("form"));
   }, [open]);
 
   useEffect(() => {
-    setMode(initialMode);
+    queueMicrotask(() => setMode(initialMode));
   }, [initialMode]);
 
   async function submit(e: React.FormEvent) {

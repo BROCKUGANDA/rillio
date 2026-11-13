@@ -119,7 +119,7 @@ export function GoalsView({ user }: { user: { baseCurrency: string } }) {
     setSimLoading(true);
     try {
       const rate = parseFloat(assumedReturn) || 0;
-      const res = await apiFetch(`/api/goals/${goalId}/simulate`, {
+      const res = await apiFetch<NonNullable<typeof sim>>(`/api/goals/${goalId}/simulate`, {
         method: "POST",
         body: JSON.stringify({ assumedReturnRate: rate > 0 ? rate / 100 : undefined }),
       });

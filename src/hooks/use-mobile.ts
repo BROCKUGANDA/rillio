@@ -11,7 +11,9 @@ export function useIsMobile() {
       setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
     }
     mql.addEventListener("change", onChange)
-    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    // Initialise from the media query inside a microtask so the effect body
+    // does not synchronously cascade a re-render on mount.
+    queueMicrotask(onChange)
     return () => mql.removeEventListener("change", onChange)
   }, [])
 

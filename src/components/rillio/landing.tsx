@@ -513,13 +513,14 @@ export function Landing({
               animate={{ opacity: 1 }}
               transition={{ delay: 0.6, duration: 0.6 }}
             >
-              {[
+              {([
                 ["Lock", "No custody — ever"],
                 ["Shield", "AES-256-GCM credentials"],
                 ["ScrollText", "Append-only audit trail"],
                 ["Zap", "Onchain-verified billing"],
-              ].map(([icon, label]) => {
-                const I = { Lock, Shield, ScrollText, Zap }[icon];
+              ] as const).map(([icon, label]) => {
+                const map = { Lock, Shield, ScrollText, Zap } as const;
+                const I = map[icon];
                 return (
                   <span key={label} className="inline-flex items-center gap-1.5">
                     <I size={13} className="text-mint-400" /> {label}

@@ -1,0 +1,45 @@
+name: CI
+on:
+  push:
+    branches: [main, staging, dev]
+  pull_request:
+    branches: [main, staging, dev]
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rillio
+          POSTGRES_PASSWORD: rillio_ci_password
+          POSTGRES_DB: rillio
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://rillio:rillio_ci_password@localhost:5432/rillio?schema=public
+      PROVIDER_CREDENTIAL_KEY: ci-test-credential-key-32bytes!!
+      SOLANA_RPC_URL: https://api.mainnet-beta.solana.com
+      SOLANA_CLUSTER: mainnet-beta
+      SOLANA_RPC_FALLBACK_URL: https://api.mainnet-beta.solana.com
+      USDC_RECIPIENT_WALLET: FzTU9xbifKJUKfigi7LvAsmm3vCtxSLcw9SuPrAoY6Uq
+      SOL_RECIPIENT_WALLET: FzTU9xbifKJUKfigi7LvAsmm3vCtxSLcw9SuPrAoY6Uq
+      SOL_PRICE_USD: "210.50"
+      WEBHOOK_SECRET: ci-webhook-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build

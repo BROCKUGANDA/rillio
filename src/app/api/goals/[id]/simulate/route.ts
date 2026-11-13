@@ -2,13 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { makeError } from "@/lib/errors";
 import { db } from "@/lib/db";
+import { projectGoal, type Cadence } from "@/lib/goals";
 
 /**
  * POST /api/goals/[id]/simulate
  *
  * Deterministic projection. NO guaranteed return (blueprint §4.4 FR-GOAL-002).
- * If the user provides an assumedReturnRate, the response labels it as
+ * If the user provides an assumedReturnRate, the response labels it as a
  * "non-guaranteed illustrative scenario" with the assumption stated.
+ *
+ * The math lives in lib/goals.ts so it is unit-tested and has one definition.
  */
 export async function POST(
   req: NextRequest,
@@ -29,73 +32,62 @@ export async function POST(
     plannedContributionMinor,
     contributionCadence,
     targetDate,
-    assumedReturnRate, // annualized, e.g. 0.04 = 4%
+    assumedReturnRate, // annualised, e.g. 0.04 = 4%
   } = body as {
     plannedContributionMinor?: string;
-    contributionCadence?: "weekly" | "biweekly" | "monthly";
+    contributionCadence?: Cadence;
     targetDate?: string;
     assumedReturnRate?: number;
   };
 
-  const contribution = plannedContributionMinor
-    ? BigInt(plannedContributionMinor)
-    : goal.plannedContributionMinor;
-  const cadence = contributionCadence ?? goal.contributionCadence;
-  const target = targetDate ? new Date(targetDate) : goal.targetDate;
-  const starting = goal.startingAmountMinor;
-
-  // Project forward from today to target date, deterministic.
-  const now = new Date();
-  const end = target ?? new Date(now.getFullYear() + 1, now.getMonth(), now.getDate());
-  const monthsTotal =
-    (end.getFullYear() - now.getFullYear()) * 12 + (end.getMonth() - now.getMonth());
-  const months = Math.max(0, monthsTotal);
-
-  // Cadence -> contributions per month
-  const perMonth = cadence === "weekly" ? contribution * 4n : cadence === "biweekly" ? contribution * 2n : contribution;
-
-  // No assumed return by default
-  let projected = starting;
-  const schedule: { month: number; contribution: string; projected: string; label: string }[] = [];
-  const useAssumedReturn = typeof assumedReturnRate === "number" && assumedReturnRate > 0 && assumedReturnRate < 0.5;
-
-  for (let m = 0; m <= months; m++) {
-    if (m > 0) {
-      // Apply contribution
-      projected += perMonth;
-      // Apply assumed return (illustrative, non-guaranteed) — simple monthly compounding
-      if (useAssumedReturn) {
-        // projected = projected * (1 + r/12)
-        // Use scaled integer math: projected * (1200 + r*12) / 1200
-        const monthlyBps = Math.round(assumedReturnRate * 1200 / 12);
-        projected = (projected * BigInt(1200 + monthlyBps)) / 1200n;
-      }
+  // Validate the caller-supplied contribution rather than trusting BigInt().
+  let contribution = goal.plannedContributionMinor;
+  if (plannedContributionMinor !== undefined) {
+    if (!/^\d+$/.test(plannedContributionMinor)) {
+      return NextResponse.json(
+        makeError("GOAL_TARGET_INVALID", "Invalid contribution", "Contribution must be a non-negative integer amount in minor units.", 422, {
+          fieldErrors: [{ field: "plannedContributionMinor", code: "INVALID", message: "Use a non-negative integer." }],
+        }),
+        { status: 422 },
+      );
     }
-    schedule.push({
-      month: m,
-      contribution: perMonth.toString(),
-      projected: projected.toString(),
-      label: new Date(now.getFullYear(), now.getMonth() + m, 1).toISOString().slice(0, 7),
-    });
+    contribution = BigInt(plannedContributionMinor);
   }
 
-  const reachesTarget = projected >= goal.targetMinor;
-  const shortfallMinor = reachesTarget ? 0n : goal.targetMinor - projected;
+  let parsedTargetDate: Date | null = goal.targetDate;
+  if (targetDate !== undefined) {
+    const d = new Date(targetDate);
+    if (isNaN(d.getTime())) {
+      return NextResponse.json(
+        makeError("GOAL_TARGET_INVALID", "Invalid target date", "Provide a valid ISO date.", 422, {
+          fieldErrors: [{ field: "targetDate", code: "INVALID", message: "Use an ISO 8601 date." }],
+        }),
+        { status: 422 },
+      );
+    }
+    parsedTargetDate = d;
+  }
+
+  const projection = projectGoal({
+    startingAmountMinor: goal.startingAmountMinor,
+    plannedContributionMinor: contribution,
+    cadence: (contributionCadence ?? goal.contributionCadence) as Cadence,
+    targetMinor: goal.targetMinor,
+    targetDate: parsedTargetDate,
+    assumedReturnRate,
+  });
 
   return NextResponse.json({
     goalId: goal.id,
-    targetMinor: goal.targetMinor.toString(),
-    startingAmountMinor: starting.toString(),
-    projectedAmountMinor: projected.toString(),
-    reachesTarget,
-    shortfallMinor: shortfallMinor.toString(),
-    months,
-    schedule: schedule.slice(-12),
-    assumedReturnRate: useAssumedReturn ? assumedReturnRate : null,
-    warning:
-      useAssumedReturn
-        ? "Illustrative scenario with assumed return. Not guaranteed. Past performance does not predict future results."
-        : "Projection assumes no investment return. Actual outcomes depend on where funds are held.",
-    disclaimer: "Planned allocations are not held funds. Rillio does not custody money in MVP.",
+    months: projection.months,
+    schedule: projection.schedule.slice(-12),
+    targetMinor: projection.targetMinor,
+    startingAmountMinor: projection.startingAmountMinor,
+    projectedAmountMinor: projection.projectedAmountMinor,
+    reachesTarget: projection.reachesTarget,
+    shortfallMinor: projection.shortfallMinor,
+    assumedReturnRate: projection.assumedReturnRate,
+    warning: projection.warning,
+    disclaimer: projection.disclaimer,
   });
 }

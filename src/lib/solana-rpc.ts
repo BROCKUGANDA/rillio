@@ -64,13 +64,11 @@ export type PortfolioObservation = {
 
 type RpcResponse<T> = { jsonrpc: "2.0"; id: number; result?: T; error?: { code: number; message: string } };
 
-async function rpc<T>(method: string, params: unknown[]): Promise<T> {
-  const cfg = getRpcConfig();
-  if (!cfg.rpcUrl) throw new Error("RPC_NOT_CONFIGURED");
+async function rpcOnce<T>(url: string, method: string, params: unknown[]): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const res = await fetch(cfg.rpcUrl, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
@@ -86,10 +84,26 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T> {
   }
 }
 
-export function getRpcConfig(): { rpcUrl: string | null; cluster: string } {
+async function rpc<T>(method: string, params: unknown[]): Promise<T> {
+  const cfg = getRpcConfig();
+  const urls = [cfg.rpcUrl, process.env.SOLANA_RPC_FALLBACK_URL].filter(Boolean) as string[];
+  if (urls.length === 0) throw new Error("RPC_NOT_CONFIGURED");
+  let lastErr: unknown = null;
+  for (const url of urls) {
+    try {
+      return await rpcOnce<T>(url, method, params);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("RPC_FAILED");
+}
+
+export function getRpcConfig(): { rpcUrl: string | null; cluster: string; fallbackUrl: string | null } {
   return {
     rpcUrl: process.env.SOLANA_RPC_URL || null,
     cluster: process.env.SOLANA_CLUSTER || "mainnet-beta",
+    fallbackUrl: process.env.SOLANA_RPC_FALLBACK_URL || null,
   };
 }
 
@@ -484,6 +498,8 @@ export async function getConfirmedTransaction(signature: string): Promise<{
   meta: {
     err: unknown;
     fee: number;
+    preBalances: number[] | null;
+    postBalances: number[] | null;
     preTokenBalances: Array<{ accountIndex: number; mint: string; owner: string; uiTokenAmount: { amount: string; decimals: number; uiAmount: number | null } }> | null;
     postTokenBalances: Array<{ accountIndex: number; mint: string; owner: string; uiTokenAmount: { amount: string; decimals: number; uiAmount: number | null } }> | null;
   } | null;
@@ -495,6 +511,8 @@ export async function getConfirmedTransaction(signature: string): Promise<{
         meta: {
           err: unknown;
           fee: number;
+          preBalances: number[] | null;
+          postBalances: number[] | null;
           preTokenBalances: Array<{ accountIndex: number; mint: string; owner: string; uiTokenAmount: { amount: string; decimals: number; uiAmount: number | null } }> | null;
           postTokenBalances: Array<{ accountIndex: number; mint: string; owner: string; uiTokenAmount: { amount: string; decimals: number; uiAmount: number | null } }> | null;
         } | null;

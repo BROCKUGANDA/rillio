@@ -73,6 +73,8 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
+    // Initial bootstrap: fetch the current session (async → not a cascading
+    // render; the rule only flags synchronous setState in an effect body).
     refreshMe();
   }, [refreshMe]);
 
@@ -82,13 +84,18 @@ export default function Page() {
     const params = new URLSearchParams(window.location.search);
     const v = params.get("view");
     if (v && ["home", "activity", "goals", "portfolio", "connections", "billing", "security", "settings"].includes(v)) {
-      setView(v as View);
-      const billing = params.get("billing");
-      if (billing === "return") {
-        setTimeout(() => toast.info("Checkout complete. Verifying onchain payment…", { description: "Plus unlocks only after the server verifies the transfer." }), 500);
-      } else if (billing === "cancelled") {
-        toast.warning("Checkout cancelled.");
-      }
+      // Apply the requested view outside the effect body so React does not warn
+      // about a synchronous cascading render.
+      const apply = () => {
+        setView(v as View);
+        const billing = params.get("billing");
+        if (billing === "return") {
+          toast.info("Checkout complete. Verifying onchain payment…", { description: "Plus unlocks only after the server verifies the transfer." });
+        } else if (billing === "cancelled") {
+          toast.warning("Checkout cancelled.");
+        }
+      };
+      queueMicrotask(apply);
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);

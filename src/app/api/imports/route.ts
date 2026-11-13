@@ -5,6 +5,8 @@ import { db } from "@/lib/db";
 import {
   processImport,
   suggestMapping,
+  fingerprintParts,
+  CsvParseError,
   type ColumnMapping,
 } from "@/lib/csv";
 import { categorize } from "@/lib/categorize";
@@ -97,10 +99,44 @@ export async function POST(req: NextRequest) {
   });
   const existingFingerprints = new Set(existingTxns.map((t) => t.fingerprint));
 
-  const result = processImport(content, mapping, user.baseCurrency, {
-    existingFingerprints,
-    maxRows: 100000,
-  });
+  let result: ReturnType<typeof processImport>;
+  try {
+    result = processImport(content, mapping, user.baseCurrency, {
+      existingFingerprints,
+      maxRows: 100000,
+    });
+  } catch (err) {
+    // A structurally unparseable file is a rejected import, not a server fault.
+    if (err instanceof CsvParseError) {
+      await db.importJob.create({
+        data: {
+          userId: user.id,
+          fileName: file.name,
+          fileSize: file.size,
+          mimeType: mime,
+          status: "failed",
+          totalRows: 0,
+          acceptedRows: 0,
+          rejectedRows: 0,
+          duplicateRows: 0,
+          errorReportJson: JSON.stringify([
+            { row: 0, field: "_file", code: "DATA_IMPORT_UNPARSEABLE", message: err.message },
+          ]),
+        },
+      });
+      return NextResponse.json(
+        makeError(
+          "DATA_IMPORT_UNPARSEABLE",
+          "We couldn't read this file",
+          "The file could not be parsed as CSV. Check the delimiter and quoting, then try again.",
+          422,
+          { fieldErrors: [{ field: "file", code: "UNPARSEABLE", message: err.message }] },
+        ),
+        { status: 422 },
+      );
+    }
+    throw err;
+  }
 
   // Fetch user's categories and rules
   const [categories, rules] = await Promise.all([
@@ -130,10 +166,12 @@ export async function POST(req: NextRequest) {
   const acceptedRows = result.normalized.filter((n) => n.errors.length === 0 && n.occurredAt && n.amountMinor !== null);
   await db.$transaction(
     acceptedRows.map((n) => {
-      const fp = createHash("sha256")
-        .update(`${n.occurredAt!.toISOString().slice(0, 10)}|${n.amountMinor!.toString()}|${(n.description || "").toLowerCase().slice(0, 120)}|${n.account.toLowerCase()}`)
-        .digest("hex");
-      // Categorize
+      const fp = fingerprintParts({
+        occurredAt: n.occurredAt!,
+        amountMinor: n.amountMinor!,
+        description: n.description,
+        account: n.account,
+      });
       const cat = categorize(n.description, n.merchant, {
         rules: rules.map((r) => ({
           id: r.id,
@@ -168,7 +206,6 @@ export async function POST(req: NextRequest) {
         },
       });
     }),
-    { timeout: 30000 }
   );
 
   // Now create normalized transactions linked to raw records
@@ -179,9 +216,12 @@ export async function POST(req: NextRequest) {
 
   await db.$transaction(
     acceptedRows.map((n) => {
-      const fp = createHash("sha256")
-        .update(`${n.occurredAt!.toISOString().slice(0, 10)}|${n.amountMinor!.toString()}|${(n.description || "").toLowerCase().slice(0, 120)}|${n.account.toLowerCase()}`)
-        .digest("hex");
+      const fp = fingerprintParts({
+        occurredAt: n.occurredAt!,
+        amountMinor: n.amountMinor!,
+        description: n.description,
+        account: n.account,
+      });
       const cat = categorize(n.description, n.merchant, {
         rules: rules.map((r) => ({
           id: r.id,
@@ -225,7 +265,6 @@ export async function POST(req: NextRequest) {
         },
       });
     }),
-    { timeout: 30000 }
   );
 
   // Update import job status

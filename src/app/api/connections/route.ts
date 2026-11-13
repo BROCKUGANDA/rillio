@@ -9,7 +9,7 @@ const connectSchema = z.object({
   providerCode: z.string().min(1),
   consentScope: z.string().default("transactions:read"),
   // For real providers: oauth code or access token. For demo: ignored.
-  authPayload: z.record(z.unknown()).optional(),
+  authPayload: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**

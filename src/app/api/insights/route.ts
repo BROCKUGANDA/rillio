@@ -156,7 +156,14 @@ export async function GET() {
     perMerchant.set(norm, cur);
   }
 
-  const recurring = [];
+  type RecurringItem = {
+    merchant: string;
+    occurrences: number;
+    monthsSeen: number;
+    medianAmountMinor: string;
+    estimatedMonthlyMinor: string;
+  };
+  const recurring: RecurringItem[] = [];
   for (const [norm, v] of perMerchant) {
     if (v.months.size < 3 || v.amounts.length < 3) continue;
     const sorted = [...v.amounts].sort((a, b) => (a > b ? 1 : a < b ? -1 : 0));

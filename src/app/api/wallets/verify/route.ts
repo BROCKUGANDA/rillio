@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { getCurrentUser } from "@/lib/auth";
 import { makeError } from "@/lib/errors";
 import { db } from "@/lib/db";
@@ -54,7 +55,8 @@ export async function POST(req: NextRequest) {
   // Verify the nonce matches what was issued (parse metadata)
   try {
     const meta = JSON.parse(recent.metadata || "{}");
-    if (meta.nonce !== nonce) {
+    const incomingHash = createHash("sha256").update(nonce).digest("hex");
+    if (meta.nonceHash !== incomingHash) {
       return NextResponse.json(makeError("AUTH_NONCE_MISMATCH", "Nonce mismatch", "The nonce does not match the issued challenge.", 401), { status: 401 });
     }
     // Check expiry
@@ -140,7 +142,7 @@ export async function POST(req: NextRequest) {
       action: "wallet_challenge_consumed",
       resourceType: "wallet",
       resourceId: address,
-      metadata: JSON.stringify({ nonce, walletId: wallet.id }),
+      metadata: JSON.stringify({ nonceHash: createHash("sha256").update(nonce).digest("hex"), walletId: wallet.id }),
     },
   });
 

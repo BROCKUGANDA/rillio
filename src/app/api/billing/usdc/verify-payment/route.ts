@@ -64,6 +64,19 @@ export async function POST(req: NextRequest) {
     signature: parsed.data.signature,
   });
 
+  if (!sub) {
+    return NextResponse.json(
+      makeError(
+        "BILLING_RECONCILIATION_REQUIRED",
+        "Payment detected, entitlement pending",
+        "Your payment was verified onchain but the subscription could not be activated yet. It will be reconciled automatically — do not send another payment.",
+        202,
+        { retryable: false },
+      ),
+      { status: 202 },
+    );
+  }
+
   return NextResponse.json({
     verified: true,
     finalized: result.finalized,

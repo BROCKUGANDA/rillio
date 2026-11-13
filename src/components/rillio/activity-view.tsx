@@ -588,7 +588,7 @@ function SubscriptionsPanel({
           <p className="text-[11px] text-slate-400 mt-0.5">{insights.recurring.method}</p>
         </div>
         <div className="font-display text-2xl font-semibold num text-lime-400">
-          {formatMinor(total, insights.currency)}
+          {formatMinor(BigInt(total), insights.currency)}
           <span className="text-xs text-slate-400 font-sans font-normal"> / month</span>
         </div>
       </div>
