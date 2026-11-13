@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { makeError } from "@/lib/errors";
 import { db } from "@/lib/db";
 import { z } from "zod";
+import { recordAudit } from "@/lib/audit";
 
 const createSchema = z.object({
   name: z.string().min(1).max(80),
@@ -76,6 +77,14 @@ export async function POST(req: NextRequest) {
       actor: "user",
       metadata: JSON.stringify({ targetMinor: data.targetMinor, plannedContributionMinor: data.plannedContributionMinor }),
     },
+  });
+  await recordAudit({
+    userId: user.id,
+    actor: "user",
+    action: "goal.created",
+    resourceType: "Goal",
+    resourceId: goal.id,
+    metadata: { name: goal.name, currency: goal.currency, targetMinor: data.targetMinor },
   });
   return NextResponse.json({
     goal: {

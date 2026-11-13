@@ -18,7 +18,27 @@ import {
 import { apiFetch } from "@/lib/api-client";
 import { formatMinor } from "@/lib/money";
 import { toast } from "sonner";
-import { Upload, FileText, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Upload, FileText, AlertCircle, CheckCircle2, Repeat, Search, Lock, TrendingUp, TrendingDown, Receipt } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { motion } from "framer-motion";
+
+/* ------------------------------ insights types ----------------------------- */
+
+type Insights = {
+  currency: string;
+  coverage: { transactionsAnalyzed: number; otherCurrencyCount: number; lookbackDays: number };
+  recurring: {
+    items: { merchant: string; occurrences: number; monthsSeen: number; medianAmountMinor: string; estimatedMonthlyMinor: string }[];
+    estimatedMonthlyTotalMinor: string;
+    method: string;
+  };
+  burnRate: {
+    trailing30dOutflowMinor: string;
+    dailyBurnMinor: string;
+    daysRemainingInMonth: number;
+    projectedMonthOutflowMinor: string;
+  };
+};
 
 type Txn = {
   id: string;
@@ -51,12 +71,22 @@ type ImportResult = {
   errors: { row: number; field: string; code: string; message: string }[];
 };
 
-export function ActivityView({ user }: { user: { id: string; baseCurrency: string } }) {
+export function ActivityView({
+  user,
+  entitlements,
+}: {
+  user: { id: string; baseCurrency: string };
+  entitlements?: Record<string, string>;
+}) {
   const [transactions, setTransactions] = useState<Txn[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTxn, setSelectedTxn] = useState<Txn | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [insights, setInsights] = useState<Insights | null>(null);
+
+  const recurringUnlocked = entitlements?.recurring_detection === "true";
 
   // Import wizard state
   const [file, setFile] = useState<File | null>(null);
@@ -84,6 +114,12 @@ export function ActivityView({ user }: { user: { id: string; baseCurrency: strin
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    apiFetch<Insights>("/api/insights")
+      .then(setInsights)
+      .catch(() => {});
   }, []);
 
   function resetWizard() {
@@ -179,6 +215,26 @@ export function ActivityView({ user }: { user: { id: string; baseCurrency: strin
     }
   }
 
+  const filteredTxns = transactions.filter((t) => {
+    if (!filter.trim()) return true;
+    const q = filter.trim().toLowerCase();
+    return (
+      t.description.toLowerCase().includes(q) ||
+      (t.merchantName ?? "").toLowerCase().includes(q) ||
+      (t.category?.name ?? "").toLowerCase().includes(q)
+    );
+  });
+
+  // Stats over the loaded window (latest 100 txns are loaded).
+  const stats = transactions.reduce(
+    (acc, t) => {
+      if (t.direction === "inflow") acc.inflow += BigInt(t.amountMinor);
+      else acc.outflow += -BigInt(t.amountMinor);
+      return acc;
+    },
+    { inflow: 0n, outflow: 0n }
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -196,40 +252,96 @@ export function ActivityView({ user }: { user: { id: string; baseCurrency: strin
         </Button>
       </div>
 
-      <Card className="bg-ink-800 border-white/10">
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="p-4 space-y-2">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full bg-ink-700" />
-              ))}
-            </div>
-          ) : transactions.length === 0 ? (
-            <div className="p-12 text-center">
-              <FileText className="mx-auto text-slate-500" size={32} />
-              <h3 className="mt-3 text-sm font-medium text-paper-100">Your money story starts here.</h3>
-              <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
-                Export a CSV from your bank or card statement and upload it. We parse, dedupe, and categorize deterministically.
-              </p>
-              <Button onClick={() => setImportOpen(true)} className="mt-4 bg-lime-400 text-ink-950 hover:bg-lime-400/90">
-                <Upload size={16} className="mr-1.5" /> Import transactions
-              </Button>
-            </div>
-          ) : (
-            <div className="divide-y divide-white/5">
-              {transactions.map((t) => (
-                <TransactionRow
-                  key={t.id}
-                  txn={t}
-                  categories={categories}
-                  onCategoryChange={(cid) => changeCategory(t.id, cid)}
-                  onClick={() => setSelectedTxn(t)}
-                />
-              ))}
-            </div>
+      {/* Stats strip */}
+      <div className="grid grid-cols-3 gap-3">
+        <StatTile
+          icon={<TrendingUp size={14} className="text-mint-400" />}
+          label="Inflow (loaded)"
+          value={loading ? null : formatMinor(stats.inflow, user.baseCurrency)}
+          accent="text-mint-400"
+        />
+        <StatTile
+          icon={<TrendingDown size={14} className="text-danger-500" />}
+          label="Outflow (loaded)"
+          value={loading ? null : formatMinor(stats.outflow, user.baseCurrency)}
+          accent="text-danger-500"
+        />
+        <StatTile
+          icon={<Receipt size={14} className="text-slate-400" />}
+          label="30-day burn / day"
+          value={insights ? formatMinor(BigInt(insights.burnRate.dailyBurnMinor), insights.currency) : null}
+          accent="text-slate-300"
+        />
+      </div>
+
+      <Tabs defaultValue="transactions" className="w-full">
+        <TabsList className="bg-ink-850 border border-white/5 h-auto p-1">
+          <TabsTrigger value="transactions" className="data-[state=active]:bg-ink-700 gap-1.5 text-xs">
+            <Receipt size={13} /> Transactions
+          </TabsTrigger>
+          <TabsTrigger value="subscriptions" className="data-[state=active]:bg-ink-700 gap-1.5 text-xs">
+            <Repeat size={13} /> Subscriptions
+            {insights && insights.recurring.items.length > 0 && (
+              <Badge className="ml-1 text-[9px] bg-lime-400/15 text-lime-400 border border-lime-400/30">
+                {insights.recurring.items.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="transactions" className="mt-4 space-y-3">
+          <div className="relative max-w-xs">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <Input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter by description, merchant, category…"
+              className="h-8 pl-8 text-xs bg-ink-850 border-white/10"
+            />
+          </div>
+          <Card className="bg-ink-800 border-white/10">
+            <CardContent className="p-0">
+              {loading ? (
+                <div className="p-4 space-y-2">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <Skeleton key={i} className="h-12 w-full bg-ink-700" />
+                  ))}
+                </div>
+              ) : filteredTxns.length === 0 ? (
+                <div className="p-12 text-center">
+                  <FileText className="mx-auto text-slate-500" size={32} />
+                  <h3 className="mt-3 text-sm font-medium text-paper-100">Your money story starts here.</h3>
+                  <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
+                    Export a CSV from your bank or card statement and upload it. We parse, dedupe, and categorize deterministically.
+                  </p>
+                  <Button onClick={() => setImportOpen(true)} className="mt-4 bg-lime-400 text-ink-950 hover:bg-lime-400/90">
+                    <Upload size={16} className="mr-1.5" /> Import transactions
+                  </Button>
+                </div>
+              ) : (
+                <div className="divide-y divide-white/5">
+                  {filteredTxns.map((t) => (
+                    <TransactionRow
+                      key={t.id}
+                      txn={t}
+                      categories={categories}
+                      onCategoryChange={(cid) => changeCategory(t.id, cid)}
+                      onClick={() => setSelectedTxn(t)}
+                    />
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          {!loading && filter && filteredTxns.length > 0 && (
+            <p className="text-xs text-slate-500">Showing {filteredTxns.length} of {transactions.length} loaded transactions.</p>
           )}
-        </CardContent>
-      </Card>
+        </TabsContent>
+
+        <TabsContent value="subscriptions" className="mt-4">
+          <SubscriptionsPanel insights={insights} unlocked={recurringUnlocked} onImport={() => { resetWizard(); setImportOpen(true); }} />
+        </TabsContent>
+      </Tabs>
 
       {/* Import wizard sheet */}
       <Sheet open={importOpen} onOpenChange={(o) => { setImportOpen(o); if (!o) resetWizard(); }}>
@@ -405,6 +517,123 @@ export function ActivityView({ user }: { user: { id: string; baseCurrency: strin
           )}
         </SheetContent>
       </Sheet>
+    </div>
+  );
+}
+
+function StatTile({
+  icon,
+  label,
+  value,
+  accent,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string | null;
+  accent: string;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="rounded-xl border border-white/8 bg-ink-800/80 p-3.5 hover:border-white/15 transition-colors"
+    >
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-400">
+        {icon} {label}
+      </div>
+      <div className={`font-display text-xl font-semibold mt-1 num ${accent}`}>
+        {value ?? <span className="text-slate-600">—</span>}
+      </div>
+    </motion.div>
+  );
+}
+
+function SubscriptionsPanel({
+  insights,
+  unlocked,
+  onImport,
+}: {
+  insights: Insights | null;
+  unlocked: boolean;
+  onImport: () => void;
+}) {
+  if (!insights || insights.coverage.transactionsAnalyzed === 0) {
+    return (
+      <Card className="bg-ink-800 border-white/10">
+        <CardContent className="p-10 text-center">
+          <Repeat className="mx-auto text-slate-500" size={28} />
+          <h3 className="mt-3 text-sm font-medium text-paper-100">No data to analyze yet.</h3>
+          <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+            Subscriptions are detected from at least three months of similar outflows with the same merchant. Import some statements first.
+          </p>
+          <Button onClick={onImport} className="mt-4 bg-lime-400 text-ink-950 hover:bg-lime-400/90">
+            <Upload size={15} className="mr-1.5" /> Import transactions
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const items = insights.recurring.items;
+  const total = insights.recurring.estimatedMonthlyTotalMinor;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-lime-400/20 bg-lime-400/5 p-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium flex items-center gap-2">
+            <Repeat size={15} className="text-lime-400" /> Estimated recurring spend
+          </div>
+          <p className="text-[11px] text-slate-400 mt-0.5">{insights.recurring.method}</p>
+        </div>
+        <div className="font-display text-2xl font-semibold num text-lime-400">
+          {formatMinor(total, insights.currency)}
+          <span className="text-xs text-slate-400 font-sans font-normal"> / month</span>
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <Card className="bg-ink-800 border-white/10">
+          <CardContent className="p-8 text-center">
+            <p className="text-sm text-slate-400">No deterministic recurring patterns found in this history.</p>
+            <p className="text-xs text-slate-500 mt-1">We only surface patterns we can explain — never guesses.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {items.map((r) => (
+            <motion.div
+              key={r.merchant}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="rounded-xl border border-white/8 bg-ink-800 p-4 hover:border-mint-400/30 transition-colors"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-paper-100 truncate">{r.merchant}</span>
+                <span className="num text-sm text-lime-400 font-semibold">
+                  {formatMinor(BigInt(r.estimatedMonthlyMinor), insights.currency)}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400">
+                <span>{r.occurrences} charges</span>
+                <span>·</span>
+                <span>{r.monthsSeen} distinct months</span>
+                <Badge variant="outline" className="ml-auto text-[9px] border-white/10 text-slate-400">median</Badge>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+      <p className="text-[11px] text-slate-500">
+        Coverage: {insights.coverage.transactionsAnalyzed} transactions over {insights.coverage.lookbackDays} days
+        {insights.coverage.otherCurrencyCount > 0 && ` · ${insights.coverage.otherCurrencyCount} non-${insights.currency} transactions excluded`}
+      </p>
+      {!unlocked && (
+        <p className="text-[11px] text-slate-500 border-t border-white/5 pt-3">
+          Recurring detection is a Plus feature — you are seeing the deterministic preview. Upgrade in Billing for portfolio analytics, custom rules and exports.
+        </p>
+      )}
     </div>
   );
 }

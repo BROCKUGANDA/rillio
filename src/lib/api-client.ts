@@ -18,9 +18,18 @@ export type Counts = {
   wallets: number;
 };
 
+export type PlanInfo = {
+  code: string;
+  name: string;
+  status: string;
+  currentPeriodEnd: string | null;
+};
+
 export type MeResponse = {
   user: Session;
   counts: Counts;
+  plan?: PlanInfo;
+  entitlements?: Record<string, string>;
 };
 
 export async function apiFetch<T = unknown>(

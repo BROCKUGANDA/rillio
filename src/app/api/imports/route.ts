@@ -9,6 +9,7 @@ import {
 } from "@/lib/csv";
 import { categorize } from "@/lib/categorize";
 import { createHash } from "crypto";
+import { recordAudit } from "@/lib/audit";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB
 
@@ -245,6 +246,22 @@ export async function POST(req: NextRequest) {
       title: result.rejectedRows > 0 ? "Import completed with review items" : "Import completed",
       body: `${result.acceptedRows} of ${result.totalRows} rows imported. ${result.rejectedRows} need review.`,
       payload: JSON.stringify({ importJobId: importJob.id }),
+    },
+  });
+
+  await recordAudit({
+    userId: user.id,
+    actor: "user",
+    action: "import.completed",
+    resourceType: "ImportJob",
+    resourceId: importJob.id,
+    metadata: {
+      fileName: importJob.fileName,
+      finalStatus,
+      totalRows: result.totalRows,
+      acceptedRows: result.acceptedRows,
+      rejectedRows: result.rejectedRows,
+      duplicateRows: result.duplicateRows,
     },
   });
 

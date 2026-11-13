@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { makeError } from "@/lib/errors";
 import { db } from "@/lib/db";
+import { recordAudit } from "@/lib/audit";
 
 export async function PATCH(
   req: NextRequest,
@@ -51,6 +52,19 @@ export async function PATCH(
     where: { id: txn.id },
     data: { categoryId, updatedAt: new Date() },
     include: { category: true },
+  });
+
+  await recordAudit({
+    userId: user.id,
+    actor: "user",
+    action: "transaction.category_changed",
+    resourceType: "Transaction",
+    resourceId: txn.id,
+    metadata: {
+      fromCategoryId: txn.categoryId,
+      toCategoryId: categoryId,
+      reason: reason ?? "User correction",
+    },
   });
 
   return NextResponse.json({

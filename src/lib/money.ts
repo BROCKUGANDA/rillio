@@ -48,7 +48,10 @@ export function parseDecimalToMinor(
 
   const decimals = decimalsFor(currency);
   const isNegative = /^[-(]/.test(s);
+  // Strip parentheses, minus AND plus signs — many bank exports prefix
+  // positive amounts with "+" (e.g. "+4200.00" for payroll credits).
   s = s.replace(/[()-]/g, "");
+  s = s.replace(/\+/g, "");
   s = s.replace(/\s/g, "");
 
   // Detect both thousand and decimal separators
@@ -61,11 +64,17 @@ export function parseDecimalToMinor(
   if (hasComma && hasDot) {
     // Whichever appears last is the decimal separator
     if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
-      // EU: 1.234,56
-      intPart = s.replace(/\./g, "").replace(/,/g, ".");
+      // EU: 1.234,56 → strip dots (thousands), comma becomes decimal
+      const normalized = s.replace(/\./g, "").replace(/,/g, ".");
+      const idx = normalized.lastIndexOf(".");
+      intPart = normalized.slice(0, idx);
+      fracPart = normalized.slice(idx + 1);
     } else {
-      // US: 1,234.56
-      intPart = s.replace(/,/g, "");
+      // US: 1,234.56 → strip commas (thousands), dot stays decimal
+      const normalized = s.replace(/,/g, "");
+      const idx = normalized.lastIndexOf(".");
+      intPart = normalized.slice(0, idx);
+      fracPart = normalized.slice(idx + 1);
     }
   } else if (hasComma) {
     // Comma only — could be EU decimal (12,34) or US thousands (1,234)

@@ -85,7 +85,13 @@ type SolIntent = {
 
 type SheetKind = "usdc" | "sol" | null;
 
-export function BillingView() {
+export function BillingView({
+  plan,
+  onRefresh,
+}: {
+  plan?: { code: string; name: string; status: string; currentPeriodEnd: string | null };
+  onRefresh?: () => void | Promise<void>;
+} = {}) {
   const [data, setData] = useState<BillingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [sheetKind, setSheetKind] = useState<SheetKind>(null);
@@ -152,7 +158,8 @@ export function BillingView() {
       setUsdcIntent(null);
       setSolIntent(null);
       setSignature("");
-      load();
+      await load();
+      await onRefresh?.();
     } catch (e) {
       const err = e as Error & { retryable?: boolean };
       toast.error(err.message, { description: err.retryable ? "Retry once the transaction confirms onchain." : undefined });
@@ -165,7 +172,8 @@ export function BillingView() {
     try {
       await apiFetch("/api/billing/cancel", { method: "POST" });
       toast.success("Subscription will end at period close.");
-      load();
+      await load();
+      await onRefresh?.();
     } catch (e) {
       toast.error("Failed to cancel.");
     }

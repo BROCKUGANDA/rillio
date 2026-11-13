@@ -46,6 +46,18 @@ type PortfolioSummary = {
 
 type GoalsResp = { goals: Array<{ id: string; name: string; targetMinor: string; currency: string; startingAmountMinor: string; plannedContributionMinor: string; contributionCadence: string; status: string; targetDate: string | null }> };
 
+type Insights = {
+  currency: string;
+  topMerchants: { merchant: string; outflowMinor: string; txnCount: number; sharePct: number }[];
+  burnRate: {
+    trailing30dOutflowMinor: string;
+    dailyBurnMinor: string;
+    daysRemainingInMonth: number;
+    projectedMonthOutflowMinor: string;
+  };
+  recurring: { items: { merchant: string; estimatedMonthlyMinor: string }[]; estimatedMonthlyTotalMinor: string };
+};
+
 const PIE_COLORS = ["#C5F36A", "#62E0B5", "#64CFE0", "#9B8AFB", "#F3B95F", "#39C98A", "#F16D79", "#AAB7C7", "#73849A"];
 
 export function HomeView({
@@ -58,6 +70,7 @@ export function HomeView({
   const [summary, setSummary] = useState<Summary | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null);
   const [goals, setGoals] = useState<GoalsResp["goals"] | null>(null);
+  const [insights, setInsights] = useState<Insights | null>(null);
   const [loading, setLoading] = useState(true);
   const [periodMonths, setPeriodMonths] = useState(3);
 
@@ -68,7 +81,7 @@ export function HomeView({
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth() - periodMonths, 1);
       try {
-        const [s, p, g] = await Promise.all([
+        const [s, p, g, ins] = await Promise.all([
           apiFetch<Summary>("/api/transactions", {
             method: "POST",
             body: JSON.stringify({
@@ -78,11 +91,13 @@ export function HomeView({
           }),
           apiFetch<PortfolioSummary>("/api/portfolio/summary"),
           apiFetch<GoalsResp>("/api/goals"),
+          apiFetch<Insights>("/api/insights").catch(() => null),
         ]);
         if (cancelled) return;
         setSummary(s);
         setPortfolio(p);
         setGoals(g.goals);
+        if (ins) setInsights(ins);
       } catch (e) {
         console.error(e);
       } finally {
@@ -166,6 +181,59 @@ export function HomeView({
           loading={loading}
         />
       </div>
+
+      {/* Insights strip — burn rate, recurring total, top merchant */}
+      {insights && insights.burnRate && BigInt(insights.burnRate.trailing30dOutflowMinor) > 0n && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2, duration: 0.4 }}
+          className="grid gap-3 grid-cols-1 sm:grid-cols-3"
+        >
+          <button
+            onClick={() => onNavigate("activity")}
+            className="text-left rounded-xl border border-white/8 bg-ink-850/80 p-4 hover:border-mint-400/30 transition-colors group"
+          >
+            <div className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-mint-400 animate-pulse" /> Daily burn (30d)
+            </div>
+            <div className="font-display text-lg font-semibold num mt-1 text-paper-100">
+              {formatMinor(BigInt(insights.burnRate.dailyBurnMinor), insights.currency)}
+              <span className="text-[11px] text-slate-500 font-sans font-normal"> · projected {formatMinor(BigInt(insights.burnRate.projectedMonthOutflowMinor), insights.currency)}</span>
+            </div>
+          </button>
+          <button
+            onClick={() => onNavigate("activity")}
+            className="text-left rounded-xl border border-white/8 bg-ink-850/80 p-4 hover:border-lime-400/30 transition-colors"
+          >
+            <div className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-lime-400" /> Recurring detected
+            </div>
+            <div className="font-display text-lg font-semibold num mt-1 text-paper-100">
+              {insights.recurring.items.length > 0
+                ? `${formatMinor(BigInt(insights.recurring.estimatedMonthlyTotalMinor), insights.currency)}/mo`
+                : "None found"}
+              <span className="text-[11px] text-slate-500 font-sans font-normal"> · {insights.recurring.items.length} patterns</span>
+            </div>
+          </button>
+          <button
+            onClick={() => onNavigate("activity")}
+            className="text-left rounded-xl border border-white/8 bg-ink-850/80 p-4 hover:border-violet-400/30 transition-colors"
+          >
+            <div className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-violet-400" /> Top merchant (90d)
+            </div>
+            <div className="font-display text-lg font-semibold num mt-1 text-paper-100 truncate">
+              {insights.topMerchants[0] ? insights.topMerchants[0].merchant : "—"}
+              {insights.topMerchants[0] && (
+                <span className="text-[11px] text-slate-500 font-sans font-normal">
+                  {" "}· {formatMinor(BigInt(insights.topMerchants[0].outflowMinor), insights.currency)}
+                </span>
+              )}
+            </div>
+          </button>
+        </motion.div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Cash flow chart */}

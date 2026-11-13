@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { apiFetch, type Session, type Counts } from "@/lib/api-client";
+import { apiFetch, type Session, type Counts, type PlanInfo } from "@/lib/api-client";
 import { Landing } from "@/components/rillio/landing";
 import { AuthModal } from "@/components/rillio/auth-modal";
 import { HomeView } from "@/components/rillio/home-view";
@@ -13,6 +13,9 @@ import { PortfolioView } from "@/components/rillio/portfolio-view";
 import { ConnectionsView } from "@/components/rillio/connections-view";
 import { BillingView } from "@/components/rillio/billing-view";
 import { SettingsView } from "@/components/rillio/settings-view";
+import { SecurityView } from "@/components/rillio/security-view";
+import { CommandPalette } from "@/components/rillio/command-palette";
+import { NotificationsPanel } from "@/components/rillio/notifications-panel";
 import { RillioMark, RillioWordmark } from "@/components/rillio/icons";
 import {
   Home,
@@ -25,11 +28,13 @@ import {
   Menu,
   Plug,
   CreditCard,
+  ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { Search, Command } from "lucide-react";
 
-type View = "home" | "activity" | "goals" | "portfolio" | "connections" | "billing" | "settings";
+type View = "home" | "activity" | "goals" | "portfolio" | "connections" | "billing" | "security" | "settings";
 
 const viewMotion = {
   initial: { opacity: 0, y: 14, filter: "blur(4px)" },
@@ -41,19 +46,25 @@ const viewMotion = {
 export default function Page() {
   const [user, setUser] = useState<Session | null>(null);
   const [counts, setCounts] = useState<Counts>({ imports: 0, transactions: 0, goals: 0, wallets: 0 });
+  const [plan, setPlan] = useState<PlanInfo>({ code: "free", name: "Free", status: "active", currentPeriodEnd: null });
+  const [entitlements, setEntitlements] = useState<Record<string, string>>({});
   const [booting, setBooting] = useState(true);
   const [view, setView] = useState<View>("home");
   const [unread, setUnread] = useState(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("register");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const reduce = useReducedMotion();
 
   const refreshMe = useCallback(async () => {
     try {
-      const res = await apiFetch<{ user: Session; counts: Counts }>("/api/auth/me");
+      const res = await apiFetch<{ user: Session; counts: Counts; plan?: PlanInfo; entitlements?: Record<string, string> }>("/api/auth/me");
       setUser(res.user);
       setCounts(res.counts);
+      setPlan(res.plan ?? { code: "free", name: "Free", status: "active", currentPeriodEnd: null });
+      setEntitlements(res.entitlements ?? {});
     } catch {
       setUser(null);
     } finally {
@@ -70,7 +81,7 @@ export default function Page() {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const v = params.get("view");
-    if (v && ["home", "activity", "goals", "portfolio", "connections", "billing", "settings"].includes(v)) {
+    if (v && ["home", "activity", "goals", "portfolio", "connections", "billing", "security", "settings"].includes(v)) {
       setView(v as View);
       const billing = params.get("billing");
       if (billing === "return") {
@@ -86,6 +97,25 @@ export default function Page() {
     if (!user) return;
     apiFetch<{ unreadCount: number }>("/api/notifications").then((r) => setUnread(r.unreadCount)).catch(() => {});
   }, [user]);
+
+  // Command palette: ⌘K / Ctrl+K, or "/" when not typing in a field.
+  useEffect(() => {
+    if (!user) return;
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      } else if (e.key === "/" && !paletteOpen) {
+        const t = e.target as HTMLElement;
+        if (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA" && !t.isContentEditable) {
+          e.preventDefault();
+          setPaletteOpen(true);
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [user, paletteOpen]);
 
   async function signOut() {
     try {
@@ -130,14 +160,15 @@ export default function Page() {
     );
   }
 
-  const navItems: { id: View; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { id: "home", label: "Home", icon: <Home size={18} /> },
-    { id: "activity", label: "Activity", icon: <ListChecks size={18} />, badge: counts.transactions || undefined },
-    { id: "goals", label: "Goals", icon: <Target size={18} />, badge: counts.goals || undefined },
-    { id: "portfolio", label: "Portfolio", icon: <Wallet size={18} />, badge: counts.wallets || undefined },
-    { id: "connections", label: "Connections", icon: <Plug size={18} /> },
-    { id: "billing", label: "Billing", icon: <CreditCard size={18} /> },
-    { id: "settings", label: "Settings", icon: <Settings size={18} /> },
+  const navItems: { id: View; label: string; icon: React.ReactNode; badge?: number; hint: string }[] = [
+    { id: "home", label: "Home", icon: <Home size={18} />, hint: "Cash-flow overview & quick actions" },
+    { id: "activity", label: "Activity", icon: <ListChecks size={18} />, badge: counts.transactions || undefined, hint: "Transactions, subscriptions & recurring" },
+    { id: "goals", label: "Goals", icon: <Target size={18} />, badge: counts.goals || undefined, hint: "Savings targets & simulations" },
+    { id: "portfolio", label: "Portfolio", icon: <Wallet size={18} />, badge: counts.wallets || undefined, hint: "Read-only Solana wallets" },
+    { id: "connections", label: "Connections", icon: <Plug size={18} />, hint: "Bank & data providers" },
+    { id: "billing", label: "Billing", icon: <CreditCard size={18} />, hint: "Plan, invoices & Solana payments" },
+    { id: "security", label: "Security", icon: <ShieldCheck size={18} />, hint: "Audit trail, devices & consents" },
+    { id: "settings", label: "Settings", icon: <Settings size={18} />, hint: "Profile, privacy & data controls" },
   ];
 
   return (
@@ -155,11 +186,19 @@ export default function Page() {
               label={n.label}
               icon={n.icon}
               badge={n.badge}
+              hint={n.hint}
               onClick={() => setView(n.id)}
             />
           ))}
         </nav>
         <div className="p-3 border-t border-white/5">
+          <button
+            onClick={() => setPaletteOpen(true)}
+            className="w-full flex items-center justify-between px-3 py-2 mb-1 rounded-lg text-xs text-slate-400 bg-ink-850/60 border border-white/5 hover:border-white/15 hover:text-slate-300 transition-colors"
+          >
+            <span className="flex items-center gap-2"><Command size={13} /> Quick actions</span>
+            <kbd className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-ink-900 border border-white/10">⌘K</kbd>
+          </button>
           <div className="px-2 py-2 text-xs">
             <div className="text-slate-300 truncate">{user.displayName || user.email}</div>
             <div className="text-slate-500 truncate text-[11px]">{user.email}</div>
@@ -225,8 +264,19 @@ export default function Page() {
           <div className="text-sm text-slate-400">
             <span className="text-slate-300">{user.displayName || "Rillio member"}</span> · {user.baseCurrency}
           </div>
-          <div className="flex items-center gap-3">
-            <button className="relative text-slate-400 hover:text-paper-100 p-2" aria-label="Notifications">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPaletteOpen(true)}
+              className="hidden xl:flex items-center gap-2 text-xs text-slate-500 bg-ink-850/60 border border-white/5 rounded-lg px-3 py-1.5 hover:border-white/15 hover:text-slate-300 transition-colors"
+            >
+              <Search size={13} /> Search &amp; commands
+              <kbd className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-ink-900 border border-white/10">⌘K</kbd>
+            </button>
+            <button
+              onClick={() => setNotifOpen(true)}
+              className="relative text-slate-400 hover:text-paper-100 p-2"
+              aria-label={`Notifications${unread > 0 ? `, ${unread} unread` : ""}`}
+            >
               <Bell size={18} />
               {unread > 0 && (
                 <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-lime-400 text-ink-950 text-[10px] flex items-center justify-center font-bold">
@@ -247,11 +297,12 @@ export default function Page() {
               transition={viewMotion.transition}
             >
               {view === "home" && <HomeView user={user} onNavigate={(v) => setView(v as View)} />}
-              {view === "activity" && <ActivityView user={user} />}
+              {view === "activity" && <ActivityView user={user} entitlements={entitlements} />}
               {view === "goals" && <GoalsView user={user} />}
               {view === "portfolio" && <PortfolioView user={user} />}
               {view === "connections" && <ConnectionsView onNavigate={(v) => setView(v as View)} />}
-              {view === "billing" && <BillingView />}
+              {view === "billing" && <BillingView plan={plan} onRefresh={refreshMe} />}
+              {view === "security" && <SecurityView user={user} />}
               {view === "settings" && <SettingsView user={user} onSignOut={signOut} />}
             </motion.div>
           </AnimatePresence>
@@ -262,6 +313,25 @@ export default function Page() {
           <span className="text-[10px]">Working codename · Not legal or investment advice · Read-only MVP</span>
         </footer>
       </main>
+
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        items={navItems.map((n) => ({ id: n.id, label: n.label, hint: n.hint, icon: n.icon }))}
+        currentView={view}
+        onNavigate={(v) => setView(v as View)}
+        onSignOut={signOut}
+        unread={unread}
+        onOpenNotifications={() => setNotifOpen(true)}
+      />
+
+      <NotificationsPanel
+        open={notifOpen}
+        onOpenChange={(o) => {
+          setNotifOpen(o);
+          if (!o) setUnread(0);
+        }}
+      />
     </div>
   );
 }
@@ -271,24 +341,33 @@ function NavButton({
   label,
   icon,
   badge,
+  hint,
   onClick,
 }: {
   active: boolean;
   label: string;
   icon: React.ReactNode;
   badge?: number;
+  hint?: string;
   onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+      title={hint}
+      className={`group relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all ${
         active
-          ? "bg-ink-800 text-paper-100"
+          ? "bg-ink-800 text-paper-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
           : "text-slate-300 hover:bg-ink-800/50 hover:text-paper-100"
       }`}
     >
-      <span className={active ? "text-lime-400" : "text-slate-400"}>{icon}</span>
+      {active && (
+        <motion.span
+          layoutId="nav-active-bar"
+          className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-0.5 rounded-full bg-lime-400"
+        />
+      )}
+      <span className={active ? "text-lime-400" : "text-slate-400 group-hover:text-slate-300 transition-colors"}>{icon}</span>
       <span className="flex-1 text-left">{label}</span>
       {badge !== undefined && badge > 0 && (
         <Badge variant="outline" className="text-[10px] border-white/10 text-slate-300">

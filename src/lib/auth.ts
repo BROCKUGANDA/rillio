@@ -29,7 +29,7 @@ export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export async function createSession(userId: string): Promise<{
+export async function createSession(userId: string, deviceInfo?: string): Promise<{
   token: string;
   expiresAt: Date;
 }> {
@@ -41,10 +41,38 @@ export async function createSession(userId: string): Promise<{
       userId,
       tokenHash,
       expiresAt,
-      deviceInfo: "web",
+      deviceInfo: deviceInfo ?? "web",
     },
   });
   return { token, expiresAt };
+}
+
+/** Compact, privacy-preserving device label from the User-Agent header. */
+export function describeDevice(ua: string | null): string {
+  if (!ua) return "Unknown device";
+  const os = /Windows/i.test(ua)
+    ? "Windows"
+    : /Mac OS X|Macintosh/i.test(ua)
+      ? "macOS"
+      : /Android/i.test(ua)
+        ? "Android"
+        : /iPhone|iPad|iOS/i.test(ua)
+          ? "iOS"
+          : /Linux/i.test(ua)
+            ? "Linux"
+            : "Unknown OS";
+  const browser = /Edg\//i.test(ua)
+    ? "Edge"
+    : /OPR\//i.test(ua)
+      ? "Opera"
+      : /Chrome\//i.test(ua)
+        ? "Chrome"
+        : /Safari\//i.test(ua)
+          ? "Safari"
+          : /Firefox\//i.test(ua)
+            ? "Firefox"
+            : "Unknown browser";
+  return `${browser} on ${os}`;
 }
 
 export async function setSessionCookie(token: string, expiresAt: Date) {

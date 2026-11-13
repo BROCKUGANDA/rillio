@@ -235,9 +235,9 @@ export function SettingsView({
         </CardHeader>
         <CardContent>
           <div className="rounded-lg p-3 bg-ink-850 border border-white/5 text-xs text-slate-300">
-            <div className="font-medium text-slate-300 mb-1">Free plan · MVP</div>
+            <div className="font-medium text-slate-300 mb-1">Solana-native payments</div>
             <p className="text-slate-400">
-              Subscription checkout is implemented behind a provider gate. Browser redirects never grant entitlement; entitlements are reconciled server-side only after verified webhook confirmation. No payment provider is configured in this environment.
+              Plans are paid in USDC or native SOL on Solana. Entitlements are granted only after server-side onchain verification of the transfer — a browser redirect never unlocks features. Manage your plan in the Billing view.
             </p>
           </div>
         </CardContent>

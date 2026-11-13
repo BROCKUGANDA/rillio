@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { hashPassword, createSession, setSessionCookie } from "@/lib/auth";
+import { hashPassword, createSession, setSessionCookie, describeDevice } from "@/lib/auth";
 import { makeError } from "@/lib/errors";
+import { recordAudit } from "@/lib/audit";
 
 const schema = z.object({
   email: z.string().email(),
@@ -75,8 +76,17 @@ export async function POST(req: NextRequest) {
     ],
   });
 
-  const { token, expiresAt } = await createSession(user.id);
+  const device = describeDevice(req.headers.get("user-agent"));
+  const { token, expiresAt } = await createSession(user.id, device);
   await setSessionCookie(token, expiresAt);
+  await recordAudit({
+    userId: user.id,
+    actor: "user",
+    action: "auth.register",
+    resourceType: "User",
+    resourceId: user.id,
+    metadata: { baseCurrency, locale, timezone },
+  });
 
   return NextResponse.json({
     user: { id: user.id, email: user.email, displayName: user.displayName, baseCurrency: user.baseCurrency },

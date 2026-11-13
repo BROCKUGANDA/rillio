@@ -1,0 +1,878 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * Rillio landing page.
+     5→ *
+     6→ * 3D mouse-parallax hero with a floating financial card stack (CSS 3D +
+     7→ * framer-motion springs), animated core-loop flow, scroll-reveal sections,
+     8→ * animated counters, Solana payments section, pricing and CTA.
+     9→ *
+    10→ * Honors prefers-reduced-motion: heavy motion collapses to fades.
+    11→ */
+    12→
+    13→import { useCallback, useEffect, useRef, useState } from "react";
+    14→import {
+    15→  motion,
+    16→  useMotionValue,
+    17→  useSpring,
+    18→  useTransform,
+    19→  useInView,
+    20→  useScroll,
+    21→  useReducedMotion,
+    22→  animate,
+    23→  AnimatePresence,
+    24→} from "framer-motion";
+    25→import {
+    26→  RillioMark,
+    27→  RillioWordmark,
+    28→  PulseIcon,
+    29→  GoalIcon,
+    30→  OrbitIcon,
+    31→  FlowIcon,
+    32→  ShieldIcon,
+    33→  SourceIcon,
+    34→  SparkIcon,
+    35→} from "@/components/rillio/icons";
+    36→import {
+    37→  Wallet,
+    38→  ArrowRight,
+    39→  CheckCircle2,
+    40→  Shield,
+    41→  Lock,
+    42→  FileText,
+    43→  TrendingUp,
+    44→  Target,
+    45→  Coins,
+    46→  Zap,
+    47→  Github,
+    48→  Globe,
+    49→  ChevronDown,
+    50→} from "lucide-react";
+    51→
+    52→const EASE = [0.2, 0.8, 0.2, 1] as const;
+    53→
+    54→/* ---------------------------------- Reveal ---------------------------------- */
+    55→
+    56→function Reveal({
+    57→  children,
+    58→  delay = 0,
+    59→  y = 28,
+    60→  className,
+    61→}: {
+    62→  children: React.ReactNode;
+    63→  delay?: number;
+    64→  y?: number;
+    65→  className?: string;
+    66→}) {
+    67→  const ref = useRef<HTMLDivElement>(null);
+    68→  const inView = useInView(ref, { once: true, margin: "-80px" });
+    69→  const reduce = useReducedMotion();
+    70→  return (
+    71→    <motion.div
+    72→      ref={ref}
+    73→      className={className}
+    74→      initial={reduce ? { opacity: 0 } : { opacity: 0, y, filter: "blur(6px)" }}
+    75→      animate={inView ? { opacity: 1, y: 0, filter: "blur(0px)" } : undefined}
+    76→      transition={{ duration: 0.7, delay, ease: EASE }}
+    77→    >
+    78→      {children}
+    79→    </motion.div>
+    80→  );
+    81→}
+    82→
+    83→/* --------------------------------- Counter --------------------------------- */
+    84→
+    85→function Counter({ to, prefix = "", suffix = "", decimals = 0 }: { to: number; prefix?: string; suffix?: string; decimals?: number }) {
+    86→  const ref = useRef<HTMLSpanElement>(null);
+    87→  const inView = useInView(ref, { once: true });
+    88→  const [val, setVal] = useState(0);
+    89→  useEffect(() => {
+    90→    if (!inView) return;
+    91→    const controls = animate(0, to, {
+    92→      duration: 1.6,
+    93→      ease: EASE,
+    94→      onUpdate: (v) => setVal(v),
+    95→    });
+    96→    return () => controls.stop();
+    97→  }, [inView, to]);
+    98→  return (
+    99→    <span ref={ref} className="num">
+   100→      {prefix}
+   101→      {val.toFixed(decimals)}
+   102→      {suffix}
+   103→    </span>
+   104→  );
+   105→}
+   106→
+   107→/* ------------------------------ Hero card stack ----------------------------- */
+   108→
+   109→function TiltCard({ children, depth = 0, className }: { children: React.ReactNode; depth?: number; className?: string }) {
+   110→  return (
+   111→    <motion.div
+   112→      className={className}
+   113→      style={{ transform: `translateZ(${depth}px)` }}
+   114→      initial={{ opacity: 0, y: 40 }}
+   115→      animate={{ opacity: 1, y: 0 }}
+   116→      transition={{ duration: 0.9, delay: 0.2 + depth * 0.0004, ease: EASE }}
+   117→    >
+   118→      <motion.div
+   119→        animate={{ y: [0, -8, 0] }}
+   120→        transition={{ duration: 5 + depth * 0.003, repeat: Infinity, ease: "easeInOut", delay: depth * 0.001 }}
+   121→      >
+   122→        {children}
+   123→      </motion.div>
+   124→    </motion.div>
+   125→  );
+   126→}
+   127→
+   128→function HeroScene() {
+   129→  const mx = useMotionValue(0);
+   130→  const my = useMotionValue(0);
+   131→  const rotateX = useSpring(useTransform(my, [-0.5, 0.5], [10, -10]), { stiffness: 60, damping: 18 });
+   132→  const rotateY = useSpring(useTransform(mx, [-0.5, 0.5], [-14, 14]), { stiffness: 60, damping: 18 });
+   133→  const reduce = useReducedMotion();
+   134→
+   135→  const onMouseMove = useCallback(
+   136→    (e: React.MouseEvent<HTMLDivElement>) => {
+   137→      if (reduce) return;
+   138→      const rect = e.currentTarget.getBoundingClientRect();
+   139→      mx.set((e.clientX - rect.left) / rect.width - 0.5);
+   140→      my.set((e.clientY - rect.top) / rect.height - 0.5);
+   141→    },
+   142→    [mx, my, reduce]
+   143→  );
+   144→
+   145→  return (
+   146→    <div
+   147→      className="relative [perspective:1400px]"
+   148→      onMouseMove={onMouseMove}
+   149→      onMouseLeave={() => {
+   150→        mx.set(0);
+   151→        my.set(0);
+   152→      }}
+   153→    >
+   154→      <motion.div style={reduce ? undefined : { rotateX, rotateY, transformStyle: "preserve-3d" }} className="relative">
+   155→        {/* Glow */}
+   156→        <div className="absolute -inset-8 rounded-[48px] opacity-60 blur-3xl pointer-events-none"
+   157→             style={{ background: "radial-gradient(60% 60% at 50% 40%, rgba(98,224,181,0.25), transparent 70%)" }} />
+   158→
+   159→        {/* Card 1 — Financial snapshot (front) */}
+   160→        <TiltCard depth={60}>
+   161→          <div className="relative z-30 w-[320px] sm:w-[360px] rounded-2xl border border-white/10 bg-ink-800/90 backdrop-blur-xl shadow-2xl shadow-black/50 p-5">
+   162→            <div className="flex items-center justify-between">
+   163→              <div className="text-xs text-slate-400">Financial snapshot</div>
+   164→              <span className="flex items-center gap-1 text-[10px] text-mint-400">
+   165→                <span className="w-1.5 h-1.5 rounded-full bg-mint-400 animate-pulse" /> live
+   166→              </span>
+   167→            </div>
+   168→            <div className="mt-2 flex items-baseline gap-2">
+   169→              <Counter to={4820.35} prefix="$" decimals={2} />
+   170→              <span className="text-xs text-slate-500">net this month</span>
+   171→            </div>
+   172→            <div className="mt-4 grid grid-cols-3 gap-2">
+   173→              {[
+   174→                { label: "Inflow", v: "+$6,420", c: "text-mint-400" },
+   175→                { label: "Outflow", v: "-$1,599", c: "text-paper-100" },
+   176→                { label: "Goals", v: "3/3 on plan", c: "text-lime-400" },
+   177→              ].map((m) => (
+   178→                <div key={m.label} className="rounded-lg bg-ink-850 border border-white/5 p-2">
+   179→                  <div className="text-[10px] text-slate-500">{m.label}</div>
+   180→                  <div className={`text-xs num font-medium ${m.c}`}>{m.v}</div>
+   181→                </div>
+   182→              ))}
+   183→            </div>
+   184→            {/* mini sparkline */}
+   185→            <svg viewBox="0 0 320 56" className="mt-4 w-full h-14">
+   186→              <defs>
+   187→                <linearGradient id="lg-spark" x1="0" y1="0" x2="0" y2="1">
+   188→                  <stop offset="0%" stopColor="#62E0B5" stopOpacity="0.35" />
+   189→                  <stop offset="100%" stopColor="#62E0B5" stopOpacity="0" />
+   190→                </linearGradient>
+   191→              </defs>
+   192→              <path
+   193→                d="M0 44 C30 40 45 30 70 32 C95 34 110 18 140 22 C170 26 190 10 220 14 C250 18 280 6 320 8 L320 56 L0 56 Z"
+   194→                fill="url(#lg-spark)"
+   195→              />
+   196→              <motion.path
+   197→                d="M0 44 C30 40 45 30 70 32 C95 34 110 18 140 22 C170 26 190 10 220 14 C250 18 280 6 320 8"
+   198→                fill="none"
+   199→                stroke="#62E0B5"
+   200→                strokeWidth="2"
+   201→                strokeLinecap="round"
+   202→                initial={{ pathLength: 0 }}
+   203→                whileInView={{ pathLength: 1 }}
+   204→                viewport={{ once: true }}
+   205→                transition={{ duration: 1.8, ease: EASE }}
+   206→              />
+   207→            </svg>
+   208→          </div>
+   209→        </TiltCard>
+   210→
+   211→        {/* Card 2 — Goal (mid layer, offset) */}
+   212→        <TiltCard depth={30} className="absolute -bottom-14 -left-10 sm:-left-16 z-20">
+   213→          <div className="w-[240px] rounded-2xl border border-white/10 bg-ink-850/95 backdrop-blur-xl shadow-xl shadow-black/40 p-4">
+   214→            <div className="flex items-center gap-2">
+   215→              <GoalIcon size={16} className="text-lime-400" />
+   216→              <span className="text-xs font-medium">Emergency buffer</span>
+   217→              <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full border border-white/10 text-slate-400">plan</span>
+   218→            </div>
+   219→            <div className="mt-3 h-2 rounded-full bg-ink-700 overflow-hidden">
+   220→              <motion.div
+   221→                className="h-full rounded-full gradient-brand"
+   222→                initial={{ width: 0 }}
+   223→                whileInView={{ width: "68%" }}
+   224→                viewport={{ once: true }}
+   225→                transition={{ duration: 1.4, delay: 0.4, ease: EASE }}
+   226→              />
+   227→            </div>
+   228→            <div className="mt-2 flex justify-between text-[11px] text-slate-400 num">
+   229→              <span>$3,400</span>
+   230→              <span className="text-slate-500">of $5,000</span>
+   231→            </div>
+   232→            <p className="mt-1 text-[10px] text-slate-500">Planned allocation · not held funds</p>
+   233→          </div>
+   234→        </TiltCard>
+   235→
+   236→        {/* Card 3 — Solana portfolio (back layer, offset right) */}
+   237→        <TiltCard depth={-20} className="absolute -top-10 -right-8 sm:-right-14 z-10">
+   238→          <div className="w-[230px] rounded-2xl border border-white/10 bg-ink-850/95 backdrop-blur-xl shadow-xl shadow-black/40 p-4">
+   239→            <div className="flex items-center gap-2">
+   240→              <OrbitIcon size={16} className="text-violet-400" />
+   241→              <span className="text-xs font-medium">Solana wallet</span>
+   242→              <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full border border-mint-400/30 text-mint-400">read-only</span>
+   243→            </div>
+   244→            <div className="mt-3 space-y-2">
+   245→              {[
+   246→                { s: "SOL", a: "12.46", v: "$2,341" },
+   247→                { s: "USDC", a: "850.00", v: "$850" },
+   248→                { s: "JitoSOL", a: "4.02", v: "$712" },
+   249→              ].map((r, i) => (
+   250→                <motion.div
+   251→                  key={r.s}
+   252→                  className="flex items-center justify-between text-[11px]"
+   253→                  initial={{ opacity: 0, x: 12 }}
+   254→                  whileInView={{ opacity: 1, x: 0 }}
+   255→                  viewport={{ once: true }}
+   256→                  transition={{ delay: 0.5 + i * 0.15, duration: 0.5, ease: EASE }}
+   257→                >
+   258→                  <span className="text-slate-300 font-medium">{r.s}</span>
+   259→                  <span className="text-slate-400 num">{r.a}</span>
+   260→                  <span className="text-paper-100 num">{r.v}</span>
+   261→                </motion.div>
+   262→              ))}
+   263→            </div>
+   264→            <p className="mt-2 text-[10px] text-slate-500 flex items-center gap-1">
+   265→              <SourceIcon size={10} /> provenance + freshness on every quote
+   266→            </p>
+   267→          </div>
+   268→        </TiltCard>
+   269→
+   270→        {/* Floating chips */}
+   271→        <motion.div
+   272→          className="absolute -left-6 top-24 z-40 hidden sm:flex items-center gap-1.5 rounded-full border border-white/10 bg-ink-900/90 backdrop-blur px-3 py-1.5 text-[11px] text-slate-300 shadow-lg"
+   273→          animate={reduce ? undefined : { y: [0, -10, 0] }}
+   274→          transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+   275→        >
+   276→          <Shield size={12} className="text-mint-400" /> non-custodial
+   277→        </motion.div>
+   278→        <motion.div
+   279→          className="absolute -right-4 bottom-28 z-40 hidden sm:flex items-center gap-1.5 rounded-full border border-white/10 bg-ink-900/90 backdrop-blur px-3 py-1.5 text-[11px] text-slate-300 shadow-lg"
+   280→          animate={reduce ? undefined : { y: [0, 10, 0] }}
+   281→          transition={{ duration: 7, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+   282→        >
+   283→          <Zap size={12} className="text-lime-400" /> Solana payments
+   284→        </motion.div>
+   285→      </motion.div>
+   286→    </div>
+   287→  );
+   288→}
+   289→
+   290→/* --------------------------------- Core loop -------------------------------- */
+   291→
+   292→const LOOP_STEPS = [
+   293→  { icon: <Wallet size={18} />, label: "Earn", desc: "Connect real history" },
+   294→  { icon: <FlowIcon size={18} />, label: "Spend", desc: "Imported, deduped, categorized" },
+   295→  { icon: <PulseIcon size={18} />, label: "Understand", desc: "Deterministic cash flow" },
+   296→  { icon: <Target size={18} />, label: "Plan", desc: "Goals with honest math" },
+   297→  { icon: <Coins size={18} />, label: "Save", desc: "Habits that compound" },
+   298→  { icon: <OrbitIcon size={18} />, label: "Own", desc: "Read-only Solana portfolio" },
+   299→  { icon: <SparkIcon size={18} />, label: "Review", desc: "Weekly rhythm" },
+   300→];
+   301→
+   302→function CoreLoop() {
+   303→  return (
+   304→    <div className="relative">
+   305→      <div className="flex gap-3 overflow-x-auto pb-4 snap-x lg:grid lg:grid-cols-7 lg:overflow-visible">
+   306→        {LOOP_STEPS.map((s, i) => (
+   307→          <motion.div
+   308→            key={s.label}
+   309→            className="snap-start flex-shrink-0 lg:flex-shrink lg:flex lg:flex-col items-center text-center relative"
+   310→            initial={{ opacity: 0, y: 24 }}
+   311→            whileInView={{ opacity: 1, y: 0 }}
+   312→            viewport={{ once: true, margin: "-60px" }}
+   313→            transition={{ delay: i * 0.12, duration: 0.55, ease: EASE }}
+   314→          >
+   315→            <div className="relative">
+   316→              <div className="mx-auto w-12 h-12 rounded-2xl bg-ink-800 border border-white/10 flex items-center justify-center text-mint-400 shadow-lg shadow-black/30">
+   317→                {s.icon}
+   318→              </div>
+   319→              {i < LOOP_STEPS.length - 1 && (
+   320→                <svg className="hidden lg:block absolute top-6 left-[calc(50%+28px)] w-[calc(100%-8px)]" height="2">
+   321→                  <motion.line
+   322→                    x1="0" y1="1" x2="100%" y2="1"
+   323→                    stroke="#25364B"
+   324→                    strokeWidth="2"
+   325→                    strokeDasharray="6 6"
+   326→                    initial={{ pathLength: 0 }}
+   327→                    whileInView={{ pathLength: 1 }}
+   328→                    viewport={{ once: true }}
+   329→                    transition={{ delay: i * 0.12 + 0.3, duration: 0.6, ease: EASE }}
+   330→                  />
+   331→                </svg>
+   332→              )}
+   333→            </div>
+   334→            <div className="mt-3 text-sm font-medium">{s.label}</div>
+   335→            <div className="text-[11px] text-slate-500 mt-0.5 max-w-[120px] leading-snug">{s.desc}</div>
+   336→          </motion.div>
+   337→        ))}
+   338→      </div>
+   339→    </div>
+   340→  );
+   341→}
+   342→
+   343→/* --------------------------------- Features --------------------------------- */
+   344→
+   345→const FEATURES = [
+   346→  {
+   347→    icon: <FileText size={20} className="text-mint-400" />,
+   348→    title: "Real transaction import",
+   349→    body: "CSV upload with column detection, exact integer money math, duplicate fingerprints and a rejected-row report. No silent loss — totals reconcile to accepted rows.",
+   350→    tag: "FR-DATA-001",
+   351→  },
+   352→  {
+   353→    icon: <PulseIcon size={20} className="text-lime-400" />,
+   354→    title: "Deterministic cash flow",
+   355→    body: "Categories follow a transparent precedence: your correction beats your rules, rules beat merchant defaults, defaults beat heuristics. Every decision is explainable and versioned.",
+   356→    tag: "FR-CAT-001",
+   357→  },
+   358→  {
+   359→    icon: <GoalIcon size={20} className="text-mint-400" />,
+   360→    title: "Honest savings plans",
+   361→    body: "Goals are plans, never pretend custody. Projections assume no yield by default; optional assumed-return scenarios are labelled illustrative and not guaranteed.",
+   362→    tag: "FR-GOAL-002",
+   363→  },
+   364→  {
+   365→    icon: <OrbitIcon size={20} className="text-violet-400" />,
+   366→    title: "Read-only Solana ownership",
+   367→    body: "Connect a wallet to see SOL and supported SPL/Token-2022 assets with mint identity, price provenance and freshness. RPC failure shows stale data — never a fake zero.",
+   368→    tag: "FR-CHAIN-002",
+   369→  },
+   370→  {
+   371→    icon: <Zap size={20} className="text-lime-400" />,
+   372→    title: "Solana-native payments",
+   373→    body: "Rillio Plus is paid onchain: USDC or native SOL via the Solana Pay reference standard. The server verifies amount, recipient, reference and finality before unlocking anything.",
+   374→    tag: "FR-PAY-002",
+   375→  },
+   376→  {
+   377→    icon: <ShieldIcon size={20} className="text-mint-400" />,
+   378→    title: "Privacy by default",
+   379→    body: "Granular, dated consent records. Export your data or schedule deletion in one click. Wallets stay private; nothing is shared unless you decide it is.",
+   380→    tag: "FR-PRIV-001",
+   381→  },
+   382→];
+   383→
+   384→function FeatureCard({ f, i }: { f: (typeof FEATURES)[number]; i: number }) {
+   385→  const ref = useRef<HTMLDivElement>(null);
+   386→  const rx = useMotionValue(0);
+   387→  const ry = useMotionValue(0);
+   388→  const srx = useSpring(rx, { stiffness: 120, damping: 16 });
+   389→  const sry = useSpring(ry, { stiffness: 120, damping: 16 });
+   390→  const reduce = useReducedMotion();
+   391→
+   392→  return (
+   393→    <motion.div
+   394→      ref={ref}
+   395→      initial={{ opacity: 0, y: 32 }}
+   396→      whileInView={{ opacity: 1, y: 0 }}
+   397→      viewport={{ once: true, margin: "-40px" }}
+   398→      transition={{ delay: (i % 3) * 0.1, duration: 0.6, ease: EASE }}
+   399→      onMouseMove={(e) => {
+   400→        if (reduce) return;
+   401→        const r = e.currentTarget.getBoundingClientRect();
+   402→        rx.set(((e.clientY - r.top) / r.height - 0.5) * -8);
+   403→        ry.set(((e.clientX - r.left) / r.width - 0.5) * 8);
+   404→      }}
+   405→      onMouseLeave={() => { rx.set(0); ry.set(0); }}
+   406→      style={reduce ? undefined : { rotateX: srx, rotateY: sry, transformStyle: "preserve-3d" }}
+   407→      className="group rounded-2xl border border-white/10 bg-ink-800/80 backdrop-blur p-6 hover:border-mint-400/30 transition-colors [perspective:800px]"
+   408→    >
+   409→      <div className="w-10 h-10 rounded-xl bg-ink-850 border border-white/10 flex items-center justify-center" style={{ transform: "translateZ(24px)" }}>
+   410→        {f.icon}
+   411→      </div>
+   412→      <h3 className="mt-4 font-display text-lg font-semibold" style={{ transform: "translateZ(16px)" }}>{f.title}</h3>
+   413→      <p className="mt-2 text-sm text-slate-400 leading-relaxed">{f.body}</p>
+   414→      <div className="mt-4 inline-flex items-center gap-1 text-[10px] text-slate-500 font-mono" style={{ transform: "translateZ(8px)" }}>
+   415→        <SourceIcon size={10} /> {f.tag}
+   416→      </div>
+   417→    </motion.div>
+   418→  );
+   419→}
+   420→
+   421→/* ---------------------------------- Pricing ---------------------------------- */
+   422→
+   423→function PricingSection({ onGetStarted }: { onGetStarted: () => void }) {
+   424→  const plusFeatures = [
+   425→    "100,000-row CSV imports",
+   426→    "Multi-account & multi-currency",
+   427→    "Recurring detection",
+   428→    "Custom rules",
+   429→    "Up to 50 goals",
+   430→    "Scenario planning",
+   431→    "Exports & portfolio analytics",
+   432→  ];
+   433→  return (
+   434→    <div className="grid gap-5 lg:grid-cols-2 max-w-4xl mx-auto">
+   435→      <Reveal>
+   436→        <div className="rounded-2xl border border-white/10 bg-ink-800/80 p-7 h-full">
+   437→          <div className="flex items-center justify-between">
+   438→            <h3 className="font-display text-xl font-semibold">Free</h3>
+   439→            <span className="text-xs px-2 py-1 rounded-full border border-white/10 text-slate-400">forever</span>
+   440→          </div>
+   441→          <div className="mt-4 num font-display text-4xl font-semibold">$0<span className="text-sm text-slate-500 font-sans">/mo</span></div>
+   442→          <ul className="mt-6 space-y-2.5 text-sm">
+   443→            {["One workspace", "1,000-row imports", "Basic categories & trends", "3 goals", "Read-only wallet view", "Privacy export"].map((f) => (
+   444→              <li key={f} className="flex items-center gap-2 text-slate-300">
+   445→                <CheckCircle2 size={15} className="text-slate-500" /> {f}
+   446→              </li>
+   447→            ))}
+   448→          </ul>
+   449→          <button
+   450→            onClick={onGetStarted}
+   451→            className="mt-7 w-full h-10 rounded-xl border border-white/10 text-sm hover:bg-white/5 transition-colors"
+   452→          >
+   453→            Start free
+   454→          </button>
+   455→        </div>
+   456→      </Reveal>
+   457→
+   458→      <Reveal delay={0.12}>
+   459→        <div className="relative rounded-2xl border border-lime-400/30 bg-gradient-to-b from-ink-800 to-ink-850 p-7 h-full overflow-hidden">
+   460→          <div className="absolute top-0 right-0 px-3 py-1 text-[10px] font-semibold gradient-brand text-ink-950 rounded-bl-2xl">PLUS</div>
+   461→          <div className="absolute -top-16 -right-16 w-48 h-48 rounded-full blur-3xl opacity-25" style={{ background: "radial-gradient(circle, #C5F36A, transparent 70%)" }} />
+   462→          <h3 className="font-display text-xl font-semibold">Rillio Plus</h3>
+   463→          <div className="mt-4 num font-display text-4xl font-semibold">$8<span className="text-sm text-slate-500 font-sans">/mo</span></div>
+   464→          <p className="mt-1 text-xs text-mint-400 flex items-center gap-1">
+   465→            <Zap size={12} /> paid onchain — USDC or native SOL
+   466→          </p>
+   467→          <ul className="mt-6 space-y-2.5 text-sm">
+   468→            {plusFeatures.map((f) => (
+   469→              <li key={f} className="flex items-center gap-2 text-slate-200">
+   470→                <CheckCircle2 size={15} className="text-mint-400" /> {f}
+   471→              </li>
+   472→            ))}
+   473→          </ul>
+   474→          <button
+   475→            onClick={onGetStarted}
+   476→            className="mt-7 w-full h-10 rounded-xl gradient-brand text-ink-950 text-sm font-semibold hover:brightness-110 transition-all"
+   477→          >
+   478→            Get Plus with Solana
+   479→          </button>
+   480→        </div>
+   481→      </Reveal>
+   482→    </div>
+   483→  );
+   484→}
+   485→
+   486→/* ---------------------------------- Landing ---------------------------------- */
+   487→
+   488→export function Landing({ onGetStarted, onSignIn }: { onGetStarted: () => void; onSignIn: () => void }) {
+   489→  const heroRef = useRef<HTMLDivElement>(null);
+   490→  const { scrollYProgress } = useScroll({ target: heroRef, offset: ["start start", "end start"] });
+   491→  const heroY = useTransform(scrollYProgress, [0, 1], [0, 120]);
+   492→  const heroOpacity = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
+   493→
+   494→  return (
+   495→    <div className="relative min-h-screen overflow-x-clip">
+   496→      {/* Ambient background */}
+   497→      <div className="fixed inset-0 -z-10 pointer-events-none">
+   498→        <div className="absolute inset-0" style={{
+   499→          background: "radial-gradient(ellipse 55% 45% at 15% 0%, rgba(98,224,181,0.10), transparent 60%), radial-gradient(ellipse 45% 40% at 85% 8%, rgba(155,138,251,0.09), transparent 60%)",
+   500→        }} />
+   501→        <div
+   502→          className="absolute inset-0 opacity-[0.12]"
+   503→          style={{
+   504→            backgroundImage:
+   505→              "linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)",
+   506→            backgroundSize: "72px 72px",
+   507→            maskImage: "radial-gradient(ellipse 70% 55% at 50% 0%, black 30%, transparent 75%)",
+   508→            WebkitMaskImage: "radial-gradient(ellipse 70% 55% at 50% 0%, black 30%, transparent 75%)",
+   509→          }}
+   510→        />
+   511→      </div>
+   512→
+   513→      {/* Nav */}
+   514→      <header className="sticky top-0 z-40 backdrop-blur-xl bg-ink-950/70 border-b border-white/5">
+   515→        <div className="max-w-7xl mx-auto px-5 h-16 flex items-center justify-between">
+   516→          <RillioWordmark size={26} />
+   517→          <nav className="hidden md:flex items-center gap-7 text-sm text-slate-300">
+   518→            <a href="#how" className="hover:text-paper-100 transition-colors">How it works</a>
+   519→            <a href="#features" className="hover:text-paper-100 transition-colors">Features</a>
+   520→            <a href="#security" className="hover:text-paper-100 transition-colors">Security</a>
+   521→            <a href="#payments" className="hover:text-paper-100 transition-colors">Payments</a>
+   522→            <a href="#pricing" className="hover:text-paper-100 transition-colors">Pricing</a>
+   523→          </nav>
+   524→          <div className="flex items-center gap-3">
+   525→            <button onClick={onSignIn} className="text-sm text-slate-300 hover:text-paper-100 transition-colors px-3 py-2">
+   526→              Sign in
+   527→            </button>
+   528→            <button
+   529→              onClick={onGetStarted}
+   530→              className="h-9 px-4 rounded-xl gradient-brand text-ink-950 text-sm font-semibold hover:brightness-110 transition-all inline-flex items-center gap-1.5"
+   531→            >
+   532→              Get started <ArrowRight size={15} />
+   533→            </button>
+   534→          </div>
+   535→        </div>
+   536→      </header>
+   537→
+   538→      {/* Hero */}
+   539→      <section ref={heroRef} className="relative pt-16 lg:pt-24 pb-28">
+   540→        <motion.div style={heroOpacity} className="max-w-7xl mx-auto px-5 grid lg:grid-cols-2 gap-16 items-center">
+   541→          <motion.div style={heroY}>
+   542→            <motion.div
+   543→              initial={{ opacity: 0, y: 16 }}
+   544→              animate={{ opacity: 1, y: 0 }}
+   545→              transition={{ duration: 0.6, ease: EASE }}
+   546→              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-ink-850/80 px-3 py-1.5 text-xs text-slate-300"
+   547→            >
+   548→              <span className="w-1.5 h-1.5 rounded-full bg-mint-400 animate-pulse" />
+   549→              Built on Solana · read-only MVP · non-custodial
+   550→            </motion.div>
+   551→
+   552→            <motion.h1
+   553→              initial={{ opacity: 0, y: 24 }}
+   554→              animate={{ opacity: 1, y: 0 }}
+   555→              transition={{ duration: 0.7, delay: 0.08, ease: EASE }}
+   556→              className="mt-6 font-display text-4xl sm:text-5xl lg:text-6xl font-semibold leading-[1.06] tracking-tight"
+   557→            >
+   558→              Small habits.
+   559→              <br />
+   560→              <span className="text-gradient-brand">Stronger financial futures.</span>
+   561→            </motion.h1>
+   562→
+   563→            <motion.p
+   564→              initial={{ opacity: 0, y: 24 }}
+   565→              animate={{ opacity: 1, y: 0 }}
+   566→              transition={{ duration: 0.7, delay: 0.16, ease: EASE }}
+   567→              className="mt-6 text-slate-300 text-base lg:text-lg leading-relaxed max-w-lg"
+   568→            >
+   569→              Rillio turns real transactions into cash-flow insight, honest savings
+   570→              plans and visible onchain ownership — one calm home for your money,
+   571→              with you always in control.
+   572→            </motion.p>
+   573→
+   574→            <motion.div
+   575→              initial={{ opacity: 0, y: 24 }}
+   576→              animate={{ opacity: 1, y: 0 }}
+   577→              transition={{ duration: 0.7, delay: 0.24, ease: EASE }}
+   578→              className="mt-8 flex flex-wrap items-center gap-3"
+   579→            >
+   580→              <button
+   581→                onClick={onGetStarted}
+   582→                className="h-12 px-6 rounded-xl gradient-brand text-ink-950 font-semibold hover:brightness-110 hover:scale-[1.02] active:scale-[0.98] transition-all inline-flex items-center gap-2 shadow-lg shadow-lime-400/20"
+   583→              >
+   584→                Create your workspace <ArrowRight size={17} />
+   585→              </button>
+   586→              <a
+   587→                href="#how"
+   588→                className="h-12 px-6 rounded-xl border border-white/10 text-slate-200 hover:bg-white/5 transition-colors inline-flex items-center gap-2"
+   589→              >
+   590→                See how it works
+   591→              </a>
+   592→            </motion.div>
+   593→
+   594→            <motion.div
+   595→              initial={{ opacity: 0 }}
+   596→              animate={{ opacity: 1 }}
+   597→              transition={{ duration: 0.8, delay: 0.4 }}
+   598→              className="mt-9 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-500"
+   599→            >
+   600→              <span className="flex items-center gap-1.5"><Shield size={13} className="text-mint-400" /> Keys never leave your wallet</span>
+   601→              <span className="flex items-center gap-1.5"><Lock size={13} className="text-mint-400" /> Encrypted at rest</span>
+   602→              <span className="flex items-center gap-1.5"><FileText size={13} className="text-mint-400" /> Export or delete anytime</span>
+   603→            </motion.div>
+   604→          </motion.div>
+   605→
+   606→          {/* 3D hero scene */}
+   607→          <div className="relative h-[440px] sm:h-[500px] hidden sm:block">
+   608→            <HeroScene />
+   609→          </div>
+   610→          <div className="sm:hidden">
+   611→            <HeroScene />
+   612→          </div>
+   613→        </motion.div>
+   614→
+   615→        {/* Stats bar */}
+   616→        <Reveal className="max-w-7xl mx-auto px-5 mt-4">
+   617→          <div className="rounded-2xl border border-white/10 bg-ink-850/60 backdrop-blur grid grid-cols-2 lg:grid-cols-4 divide-x divide-white/5 overflow-hidden">
+   618→            {[
+   619→              { v: <Counter to={99.99} decimals={2} suffix="%" />, l: "deterministic math integrity target" },
+   620→              { v: <Counter to={100000} />, l: "rows per Plus import" },
+   621→              { v: <Counter to={0} prefix="$" />, l: "custody — we hold nothing" },
+   622→              { v: <Counter to={1} suffix="×" />, l: "everything verified onchain before access" },
+   623→            ].map((s, i) => (
+   624→              <div key={i} className="p-5 text-center">
+   625→                <div className="num font-display text-2xl font-semibold text-paper-100">{s.v}</div>
+   626→                <div className="text-[11px] text-slate-500 mt-1">{s.l}</div>
+   627→              </div>
+   628→            ))}
+   629→          </div>
+   630→        </Reveal>
+   631→      </section>
+   632→
+   633→      {/* Core loop */}
+   634→      <section id="how" className="relative py-24 border-t border-white/5">
+   635→        <div className="max-w-7xl mx-auto px-5">
+   636→          <Reveal className="text-center max-w-2xl mx-auto">
+   637→            <div className="text-xs uppercase tracking-[0.2em] text-mint-400 font-medium">The core loop</div>
+   638→            <h2 className="mt-3 font-display text-3xl lg:text-4xl font-semibold">Every number has a source</h2>
+   639→            <p className="mt-4 text-slate-400">
+   640→              Rillio links the decisions you already make to a clearer picture of where you are going.
+   641→            </p>
+   642→          </Reveal>
+   643→          <Reveal delay={0.15} className="mt-14">
+   644→            <CoreLoop />
+   645→          </Reveal>
+   646→
+   647→          {/* How it works — import flow */}
+   648→          <div className="mt-16 grid lg:grid-cols-3 gap-5">
+   649→            {[
+   650→              {
+   651→                step: "01",
+   652→                title: "Import real history",
+   653→                body: "Upload a CSV from any bank. Rillio detects columns, normalizes with exact integer math, fingerprints duplicates and shows a rejected-row report you can export.",
+   654→                icon: <FileText size={18} className="text-mint-400" />,
+   655→              },
+   656→              {
+   657→                step: "02",
+   658→                title: "See your money clearly",
+   659→                body: "Cash flow, category trends and recurring merchants — every figure explainable down to the source row. Correct a category and the rationale is versioned, never silently overwritten.",
+   660→                icon: <PulseIcon size={18} className="text-lime-400" />,
+   661→              },
+   662→              {
+   663→                step: "03",
+   664→                title: "Plan, then own",
+   665→                body: "Give savings a target with honest projections. Connect a Solana wallet to see what you own — with provenance, freshness and an explicit unverified state when identity is unknown.",
+   666→                icon: <OrbitIcon size={18} className="text-violet-400" />,
+   667→              },
+   668→            ].map((s, i) => (
+   669→              <Reveal key={s.step} delay={i * 0.12}>
+   670→                <div className="relative rounded-2xl border border-white/10 bg-ink-800/70 p-6 overflow-hidden">
+   671→                  <div className="absolute top-4 right-5 font-display text-5xl font-bold text-white/5 select-none">{s.step}</div>
+   672→                  <div className="w-10 h-10 rounded-xl bg-ink-850 border border-white/10 flex items-center justify-center">{s.icon}</div>
+   673→                  <h3 className="mt-4 font-display text-lg font-semibold">{s.title}</h3>
+   674→                  <p className="mt-2 text-sm text-slate-400 leading-relaxed">{s.body}</p>
+   675→                </div>
+   676→              </Reveal>
+   677→            ))}
+   678→          </div>
+   679→        </div>
+   680→      </section>
+   681→
+   682→      {/* Features */}
+   683→      <section id="features" className="relative py-24 border-t border-white/5">
+   684→        <div className="max-w-7xl mx-auto px-5">
+   685→          <Reveal className="text-center max-w-2xl mx-auto">
+   686→            <div className="text-xs uppercase tracking-[0.2em] text-mint-400 font-medium">Product systems</div>
+   687→            <h2 className="mt-3 font-display text-3xl lg:text-4xl font-semibold">Serious data integrity, calm experience</h2>
+   688→          </Reveal>
+   689→          <div className="mt-14 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+   690→            {FEATURES.map((f, i) => <FeatureCard key={f.title} f={f} i={i} />)}
+   691→          </div>
+   692→        </div>
+   693→      </section>
+   694→
+   695→      {/* Security */}
+   696→      <section id="security" className="relative py-24 border-t border-white/5">
+   697→        <div className="max-w-7xl mx-auto px-5 grid lg:grid-cols-2 gap-14 items-center">
+   698→          <Reveal>
+   699→            <div className="text-xs uppercase tracking-[0.2em] text-mint-400 font-medium">Security & privacy</div>
+   700→            <h2 className="mt-3 font-display text-3xl lg:text-4xl font-semibold leading-tight">
+   701→              Control stays with you.<br />Always.
+   702→            </h2>
+   703→            <p className="mt-5 text-slate-400 leading-relaxed">
+   704→              Rillio is read-only by design. Connecting a wallet never signs a
+   705→              transaction; verification uses a short-lived, domain-bound challenge
+   706→              with cryptographic ed25519 verification. Sessions are HttpOnly and
+   707→              revocable. Corrections and admin actions are audited.
+   708→            </p>
+   709→            <ul className="mt-7 space-y-3 text-sm">
+   710→              {[
+   711→                "Never requests seed phrases or private keys",
+   712→                "Wallet challenges expire in 5 minutes, one use, domain-bound",
+   713→                "Provider credentials encrypted AES-256-GCM",
+   714→                "No admin can edit balances — only auditable compensating actions",
+   715→                "Provider/RPC failure shows stale data, never empty success",
+   716→              ].map((item) => (
+   717→                <li key={item} className="flex items-start gap-2.5 text-slate-300">
+   718→                  <CheckCircle2 size={16} className="text-mint-400 mt-0.5 flex-shrink-0" />
+   719→                  {item}
+   720→                </li>
+   721→              ))}
+   722→            </ul>
+   723→          </Reveal>
+   724→          <Reveal delay={0.15}>
+   725→            <div className="relative">
+   726→              <div className="absolute -inset-6 rounded-[36px] opacity-40 blur-3xl" style={{ background: "radial-gradient(50% 50% at 50% 50%, rgba(98,224,181,0.2), transparent 70%)" }} />
+   727→              <div className="relative rounded-2xl border border-white/10 bg-ink-800/90 p-6 shadow-2xl shadow-black/40">
+   728→                <div className="flex items-center gap-3">
+   729→                  <div className="w-11 h-11 rounded-2xl bg-mint-400/15 border border-mint-400/30 flex items-center justify-center">
+   730→                    <Shield size={20} className="text-mint-400" />
+   731→                  </div>
+   732→                  <div>
+   733→                    <div className="text-sm font-semibold">Wallet challenge</div>
+   734→                    <div className="text-[11px] text-slate-500">signed message preview</div>
+   735→                  </div>
+   736→                  <span className="ml-auto text-[10px] px-2 py-1 rounded-full border border-white/10 text-slate-400">expires 5:00</span>
+   737→                </div>
+   738→                <pre className="mt-4 rounded-xl bg-ink-950 border border-white/5 p-4 text-[11px] leading-relaxed text-slate-300 font-mono overflow-x-auto">
+   739→{`Rillio Wallet Verification
+   740→Domain: rillio.app
+   741→Purpose: connect_readonly
+   742→Nonce: 8f14e45fceea167a… (hashed)
+   743→Expires: <timestamp>
+   744→
+   745→This request is read-only. Rillio
+   746→will never request a transaction
+   747→or a transfer.`}
+   748→                </pre>
+   749→                <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500">
+   750→                  <Lock size={11} className="text-mint-400" />
+   751→                  Verified with ed25519 detached signatures (tweetnacl)
+   752→                </div>
+   753→              </div>
+   754→            </div>
+   755→          </Reveal>
+   756→        </div>
+   757→      </section>
+   758→
+   759→      {/* Payments */}
+   760→      <section id="payments" className="relative py-24 border-t border-white/5">
+   761→        <div className="max-w-7xl mx-auto px-5">
+   762→          <Reveal className="text-center max-w-2xl mx-auto">
+   763→            <div className="text-xs uppercase tracking-[0.2em] text-mint-400 font-medium">Solana payments</div>
+   764→            <h2 className="mt-3 font-display text-3xl lg:text-4xl font-semibold">Pay onchain. No cards, no middlemen.</h2>
+   765→            <p className="mt-4 text-slate-400">
+   766→              Rillio Plus is settled entirely on Solana. Choose USDC for exact-dollar
+   767→              stability, or native SOL quoted at a live oracle price. The server verifies
+   768→              the transfer onchain — amount, recipient, reference and finality — before
+   769→              Plus unlocks. Browser redirects never grant access.
+   770→            </p>
+   771→          </Reveal>
+   772→
+   773→          <div className="mt-14 grid gap-5 md:grid-cols-2 max-w-4xl mx-auto">
+   774→            <Reveal>
+   775→              <div className="rounded-2xl border border-white/10 bg-ink-800/80 p-6">
+   776→                <div className="flex items-center gap-3">
+   777→                  <div className="w-10 h-10 rounded-xl bg-aqua-400/15 border border-aqua-400/30 flex items-center justify-center">
+   778→                    <Coins size={18} className="text-aqua-400" />
+   779→                  </div>
+   780→                  <div>
+   781→                    <div className="font-semibold">USDC</div>
+   782→                    <div className="text-[11px] text-slate-500">exact $8.00 · 6 decimals</div>
+   783→                  </div>
+   784→                </div>
+   785→                <ul className="mt-4 space-y-2 text-sm text-slate-300">
+   786→                  <li className="flex gap-2"><CheckCircle2 size={14} className="text-mint-400 mt-0.5" /> Stable price — no quote drift</li>
+   787→                  <li className="flex gap-2"><CheckCircle2 size={14} className="text-mint-400 mt-0.5" /> Mint, amount, recipient & reference all verified</li>
+   788→                  <li className="flex gap-2"><CheckCircle2 size={14} className="text-mint-400 mt-0.5" /> Rejected on replay or wrong token</li>
+   789→                </ul>
+   790→              </div>
+   791→            </Reveal>
+   792→            <Reveal delay={0.12}>
+   793→              <div className="rounded-2xl border border-white/10 bg-ink-800/80 p-6">
+   794→                <div className="flex items-center gap-3">
+   795→                  <div className="w-10 h-10 rounded-xl bg-violet-400/15 border border-violet-400/30 flex items-center justify-center">
+   796→                    <Wallet size={18} className="text-violet-400" />
+   797→                  </div>
+   798→                  <div>
+   799→                    <div className="font-semibold">Native SOL</div>
+   800→                    <div className="text-[11px] text-slate-500">quoted at live oracle price</div>
+   801→                  </div>
+   802→                </div>
+   803→                <ul className="mt-4 space-y-2 text-sm text-slate-300">
+   804→                  <li className="flex gap-2"><CheckCircle2 size={14} className="text-mint-400 mt-0.5" /> Solana Pay reference standard</li>
+   805→                  <li className="flex gap-2"><CheckCircle2 size={14} className="text-mint-400 mt-0.5" /> Lamports verified via balance deltas</li>
+   806→                  <li className="flex gap-2"><CheckCircle2 size={14} className="text-mint-400 mt-0.5" /> No price source → no quote, honestly</li>
+   807→                </ul>
+   808→              </div>
+   809→            </Reveal>
+   810→          </div>
+   811→        </div>
+   812→      </section>
+   813→
+   814→      {/* Pricing */}
+   815→      <section id="pricing" className="relative py-24 border-t border-white/5">
+   816→        <div className="max-w-7xl mx-auto px-5">
+   817→          <Reveal className="text-center max-w-2xl mx-auto mb-14">
+   818→            <div className="text-xs uppercase tracking-[0.2em] text-mint-400 font-medium">Pricing</div>
+   819→            <h2 className="mt-3 font-display text-3xl lg:text-4xl font-semibold">Start free. Upgrade onchain.</h2>
+   820→          </Reveal>
+   821→          <PricingSection onGetStarted={onGetStarted} />
+   822→        </div>
+   823→      </section>
+   824→
+   825→      {/* Final CTA */}
+   826→      <section className="relative py-28 border-t border-white/5 overflow-hidden">
+   827→        <div className="absolute inset-0 pointer-events-none">
+   828→          <div className="absolute left-1/2 -translate-x-1/2 top-0 w-[700px] h-[400px] rounded-full blur-3xl opacity-25"
+   829→               style={{ background: "radial-gradient(circle, rgba(197,243,106,0.35), rgba(98,224,181,0.2) 45%, transparent 70%)" }} />
+   830→        </div>
+   831→        <Reveal className="relative max-w-3xl mx-auto px-5 text-center">
+   832→          <RillioMark size={56} className="mx-auto" />
+   833→          <h2 className="mt-6 font-display text-3xl lg:text-5xl font-semibold leading-tight">
+   834→            Make progress visible.<br />
+   835→            <span className="text-gradient-brand">Keep control with you.</span>
+   836→          </h2>
+   837→          <p className="mt-5 text-slate-400 max-w-xl mx-auto">
+   838→            One workspace, real data, honest math. Build your first insight in minutes.
+   839→          </p>
+   840→          <button
+   841→            onClick={onGetStarted}
+   842→            className="mt-9 h-13 px-8 py-4 rounded-xl gradient-brand text-ink-950 font-semibold text-lg hover:brightness-110 hover:scale-[1.02] active:scale-[0.98] transition-all inline-flex items-center gap-2 shadow-xl shadow-lime-400/25"
+   843→          >
+   844→            Start your workspace <ArrowRight size={19} />
+   845→          </button>
+   846→          <p className="mt-5 text-[11px] text-slate-600">
+   847→            Working codename · not legal or investment advice · read-only MVP
+   848→          </p>
+   849→        </Reveal>
+   850→      </section>
+   851→
+   852→      {/* Footer */}
+   853→      <footer className="border-t border-white/5 py-10">
+   854→        <div className="max-w-7xl mx-auto px-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+   855→          <div className="flex items-center gap-3">
+   856→            <RillioMark size={22} />
+   857→            <span className="text-xs text-slate-500">© {new Date().getFullYear()} Rillio — working codename</span>
+   858→          </div>
+   859→          <div className="flex items-center gap-5 text-xs text-slate-500">
+   860→            <span className="flex items-center gap-1.5"><Globe size={12} /> Solana mainnet</span>
+   861→            <span className="flex items-center gap-1.5"><Zap size={12} /> Solana Pay</span>
+   862→            <span>Not legal or investment advice</span>
+   863→          </div>
+   864→        </div>
+   865→      </footer>
+   866→
+   867→      {/* Scroll hint */}
+   868→      <motion.div
+   869→        className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 md:hidden"
+   870→        animate={{ y: [0, 8, 0] }}
+   871→        transition={{ duration: 1.8, repeat: Infinity }}
+   872→      >
+   873→        <ChevronDown size={20} className="text-slate-500" />
+   874→      </motion.div>
+   875→    </div>
+   876→  );
+   877→}
+   878→

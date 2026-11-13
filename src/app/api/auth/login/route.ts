@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { verifyPassword, createSession, setSessionCookie } from "@/lib/auth";
+import { verifyPassword, createSession, setSessionCookie, describeDevice } from "@/lib/auth";
 import { makeError } from "@/lib/errors";
+import { recordAudit } from "@/lib/audit";
 
 const schema = z.object({
   email: z.string().email(),
@@ -34,6 +35,14 @@ export async function POST(req: NextRequest) {
   const user = await db.user.findUnique({ where: { email: email.toLowerCase() } });
   // FR-AUTH-001: no account enumeration — same generic error
   if (!user) {
+    await recordAudit({
+      userId: null,
+      actor: "user",
+      action: "auth.login_failed",
+      resourceType: "User",
+      reason: "unknown_email",
+      metadata: { emailDomain: email.split("@")[1] ?? "" },
+    });
     return NextResponse.json(
       makeError("AUTH_INVALID_CREDENTIALS", "Sign in failed", "Check your email and password and try again.", 401, { retryable: false }),
       { status: 401 }
@@ -41,14 +50,30 @@ export async function POST(req: NextRequest) {
   }
   const ok = await verifyPassword(password, user.passwordHash);
   if (!ok) {
+    await recordAudit({
+      userId: user.id,
+      actor: "user",
+      action: "auth.login_failed",
+      resourceType: "User",
+      resourceId: user.id,
+      reason: "bad_password",
+    });
     return NextResponse.json(
       makeError("AUTH_INVALID_CREDENTIALS", "Sign in failed", "Check your email and password and try again.", 401, { retryable: false }),
       { status: 401 }
     );
   }
 
-  const { token, expiresAt } = await createSession(user.id);
+  const device = describeDevice(req.headers.get("user-agent"));
+  const { token, expiresAt } = await createSession(user.id, device);
   await setSessionCookie(token, expiresAt);
+  await recordAudit({
+    userId: user.id,
+    actor: "user",
+    action: "auth.login",
+    resourceType: "Session",
+    resourceId: device,
+  });
 
   return NextResponse.json({
     user: { id: user.id, email: user.email, displayName: user.displayName, baseCurrency: user.baseCurrency, locale: user.locale, timezone: user.timezone },
