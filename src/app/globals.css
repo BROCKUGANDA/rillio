@@ -1,0 +1,214 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Rillio design tokens — sourced from RILLIO_COMPLETE_PRODUCT_AND_ENGINEERING_BLUEPRINT.md §8.2 */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-space-grotesk), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+
+  /* Rillio semantic tokens */
+  --color-ink-950: var(--ink-950);
+  --color-ink-900: var(--ink-900);
+  --color-ink-850: var(--ink-850);
+  --color-ink-800: var(--ink-800);
+  --color-ink-700: var(--ink-700);
+  --color-slate-500: var(--slate-500);
+  --color-slate-300: var(--slate-300);
+  --color-paper-100: var(--paper-100);
+  --color-lime-400: var(--lime-400);
+  --color-mint-400: var(--mint-400);
+  --color-aqua-400: var(--aqua-400);
+  --color-violet-400: var(--violet-400);
+  --color-success-500: var(--success-500);
+  --color-warning-500: var(--warning-500);
+  --color-danger-500: var(--danger-500);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+}
+
+/* Dark theme is Rillio default — midnight ink + lime/mint accents */
+:root {
+  --radius: 16px;
+
+  /* Midnight ink surface system */
+  --ink-950: #080E19;
+  --ink-900: #0B1422;
+  --ink-850: #111D2D;
+  --ink-800: #172538;
+  --ink-700: #25364B;
+  --slate-500: #73849A;
+  --slate-300: #AAB7C7;
+  --paper-100: #F4F7F7;
+
+  /* Brand accents */
+  --lime-400: #C5F36A;
+  --mint-400: #62E0B5;
+  --aqua-400: #64CFE0;
+  --violet-400: #9B8AFB;
+  --success-500: #39C98A;
+  --warning-500: #F3B95F;
+  --danger-500: #F16D79;
+
+  /* Map shadcn tokens to Rillio dark theme */
+  --background: var(--ink-950);
+  --foreground: var(--paper-100);
+  --card: var(--ink-800);
+  --card-foreground: var(--paper-100);
+  --popover: var(--ink-850);
+  --popover-foreground: var(--paper-100);
+  --primary: var(--lime-400);
+  --primary-foreground: #08130A;
+  --secondary: var(--ink-700);
+  --secondary-foreground: var(--paper-100);
+  --muted: var(--ink-850);
+  --muted-foreground: var(--slate-300);
+  --accent: var(--mint-400);
+  --accent-foreground: #06231A;
+  --destructive: var(--danger-500);
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.10);
+  --ring: var(--lime-400);
+  --chart-1: var(--lime-400);
+  --chart-2: var(--mint-400);
+  --chart-3: var(--aqua-400);
+  --chart-4: var(--violet-400);
+  --chart-5: var(--warning-500);
+
+  --sidebar: var(--ink-900);
+  --sidebar-foreground: var(--paper-100);
+  --sidebar-primary: var(--lime-400);
+  --sidebar-primary-foreground: #08130A;
+  --sidebar-accent: var(--ink-800);
+  --sidebar-accent-foreground: var(--paper-100);
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --sidebar-ring: var(--lime-400);
+}
+
+/* Optional light theme override (kept for accessibility — blueprint §8.2 light tokens) */
+.light {
+  --background: #F6F8F7;
+  --foreground: #101A22;
+  --card: #FFFFFF;
+  --card-foreground: #101A22;
+  --popover: #FFFFFF;
+  --popover-foreground: #101A22;
+  --primary: #215C4C;
+  --primary-foreground: #F4F7F7;
+  --secondary: #EEF3F1;
+  --secondary-foreground: #101A22;
+  --muted: #EEF3F1;
+  --muted-foreground: #71828B;
+  --accent: #6F9E43;
+  --accent-foreground: #FFFFFF;
+  --destructive: #D43F4B;
+  --border: #E1EAE6;
+  --input: #E1EAE6;
+  --ring: #247DC1;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "tnum" 1, "ss01" 1;
+    background-image:
+      radial-gradient(ellipse 60% 50% at 12% -8%, rgba(98, 224, 181, 0.10), transparent 60%),
+      radial-gradient(ellipse 50% 45% at 88% 6%, rgba(155, 138, 251, 0.08), transparent 60%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  /* Tabular numerics for all financial figures */
+  .num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  /* Display font helper */
+  .font-display {
+    font-family: var(--font-display);
+  }
+  /* Subtle scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.16); background-clip: padding-box; }
+}
+
+/* Rillio brand gradients — used sparingly as accents (blueprint §8.3) */
+.gradient-brand {
+  background-image: linear-gradient(120deg, #C5F36A 0%, #62E0B5 100%);
+}
+.gradient-flow {
+  background-image: linear-gradient(135deg, #62E0B5 0%, #64CFE0 50%, #9B8AFB 100%);
+}
+.text-gradient-brand {
+  background-image: linear-gradient(120deg, #C5F36A 0%, #62E0B5 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Focus-visible polish */
+:focus-visible {
+  outline: 2px solid var(--lime-400);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

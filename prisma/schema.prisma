@@ -1,0 +1,354 @@
+// Rillio — MVP Prisma schema
+// Source: RILLIO_COMPLETE_PRODUCT_AND_ENGINEERING_BLUEPRINT.md §11
+// Money is stored as BigInt minor units (amountMinor) with ISO currency codes.
+// Raw transaction evidence is kept separate from normalized transaction records.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String?
+  locale       String   @default("en")
+  timezone     String   @default("UTC")
+  baseCurrency String   @default("USD")
+  status       String   @default("active") // active | suspended | deletion_pending | deleted
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions                Session[]
+  imports                 ImportJob[]
+  rawTransactions         RawTransaction[]
+  transactions            Transaction[]
+  categories              Category[]
+  categorizationRules     CategorizationRule[]
+  cashflowSnapshots       CashflowSnapshot[]
+  goals                   Goal[]
+  wallets                 Wallet[]
+  portfolioSnapshots      PortfolioSnapshot[]
+  consents                Consent[]
+  notifications           Notification[]
+  dataExportRequests      DataExportRequest[]
+  deletionRequests        DeletionRequest[]
+  auditEvents             AuditEvent[]
+}
+
+model Session {
+  id         String    @id @default(cuid())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  tokenHash  String    @unique
+  deviceInfo String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model ImportJob {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  fileName        String
+  fileSize        Int
+  mimeType        String
+  status          String   @default("uploaded") // uploaded | parsing | validating | normalizing | deduplicating | ready | failed | partial
+  totalRows       Int      @default(0)
+  acceptedRows    Int      @default(0)
+  rejectedRows    Int      @default(0)
+  duplicateRows   Int      @default(0)
+  errorReportJson String?  // JSON-encoded array of {row, field, code, message}
+  idempotencyKey  String?
+  createdAt       DateTime @default(now())
+  completedAt     DateTime?
+
+  rawTransactions RawTransaction[]
+
+  @@index([userId, createdAt])
+}
+
+model RawTransaction {
+  id                 String   @id @default(cuid())
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId             String
+  importJob          ImportJob @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+  importJobId        String
+  sourceRowNumber    Int
+  rawPayload         String   // original CSV row JSON-encoded
+  sourceHash         String   // sha256 of normalized fingerprint
+  externalId         String?
+  createdAt          DateTime @default(now())
+
+  transaction        Transaction?
+
+  @@index([userId, importJobId])
+  @@index([sourceHash])
+}
+
+model Transaction {
+  id             String   @id @default(cuid())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  rawTransaction RawTransaction? @relation(fields: [rawTransactionId], references: [id], onDelete: SetNull)
+  rawTransactionId String? @unique
+  importJobId    String
+
+  // Normalized fields
+  occurredAt     DateTime
+  accountLabel   String   @default("default")
+  merchantName   String?
+  description    String
+  amountMinor    BigInt   // signed minor units; negative = outflow, positive = inflow
+  currency       String   // ISO 4217
+  direction      String   // inflow | outflow
+  status         String   @default("posted") // posted | pending | refund | transfer
+  category       Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  categoryId     String?
+  sourceProvider String   @default("csv")
+  externalTransactionId String?
+  fingerprint    String   // (date|amount|description|account) hash for dedupe
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  categoryHistory TransactionCategoryHistory[]
+
+  @@index([userId, occurredAt])
+  @@index([userId, categoryId, occurredAt])
+  @@index([fingerprint])
+}
+
+model TransactionCategoryHistory {
+  id            String   @id @default(cuid())
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  transactionId String
+  categoryId    String?
+  actor         String   // user | rule | heuristic | system
+  actorRuleId   String?
+  reason        String?
+  modelVersion  String?
+  createdAt     DateTime @default(now())
+
+  @@index([transactionId, createdAt])
+}
+
+model Category {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  name        String
+  kind        String   @default("expense") // expense | income | transfer | ignore
+  color       String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  transactions      Transaction[]
+  categorizationRules CategorizationRule[]
+  cashflowSnapshots CashflowSnapshot[]
+
+  @@unique([userId, name])
+}
+
+model CategorizationRule {
+  id         String   @id @default(cuid())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  field      String   // merchant | description
+  pattern    String   // case-insensitive substring or regex
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  priority   Int      @default(100)
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, enabled, priority])
+}
+
+model CashflowSnapshot {
+  id             String   @id @default(cuid())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  periodStart    DateTime
+  periodEnd      DateTime
+  currency       String
+  inflowMinor    BigInt   @default(0)
+  outflowMinor   BigInt   @default(0)
+  netMinor       BigInt   @default(0)
+  calculationVersion String @default("v1")
+  category       Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  categoryId     String?
+  createdAt      DateTime @default(now())
+
+  @@unique([userId, periodStart, periodEnd, currency, categoryId])
+}
+
+model Goal {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  name            String
+  targetMinor     BigInt
+  currency        String
+  startingAmountMinor BigInt @default(0)
+  plannedContributionMinor BigInt @default(0)
+  contributionCadence String @default("monthly") // weekly | biweekly | monthly
+  targetDate      DateTime?
+  status          String   @default("active") // active | paused | archived | completed
+  // IMPORTANT: planned allocations are PLANNING records, not held funds (blueprint §4.4 FR-GOAL-003)
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  events          GoalEvent[]
+
+  @@index([userId, status])
+}
+
+model GoalEvent {
+  id          String   @id @default(cuid())
+  goal        Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  goalId      String
+  type        String   // created | updated | paused | resumed | archived | contribution | scenario
+  amountMinor BigInt?
+  actor       String   @default("user")
+  source      String?
+  metadata    String?  // JSON-encoded
+  createdAt   DateTime @default(now())
+
+  @@index([goalId, createdAt])
+}
+
+model Wallet {
+  id            String   @id @default(cuid())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  chain         String   @default("solana")
+  address       String
+  label         String?
+  verification  String   @default("unverified") // unverified | verified
+  visibility    String   @default("private")
+  lastScanAt    DateTime?
+  disconnectedAt DateTime?
+  createdAt     DateTime @default(now())
+
+  tokenAccounts     TokenAccount[]
+  portfolioSnapshots PortfolioSnapshot[]
+
+  @@unique([userId, address])
+  @@index([userId, disconnectedAt])
+}
+
+model TokenAccount {
+  id              String   @id @default(cuid())
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  walletId        String
+  mint            String
+  tokenProgram    String   @default("spl-token") // spl-token | token-2022
+  symbol          String?
+  name            String?
+  decimals        Int
+  baseUnitAmount  String   // integer string — never float
+  snapshotAt      DateTime @default(now())
+  verified        Boolean  @default(false)
+  unpriced        Boolean  @default(false)
+  priceQuoteUsd   String?  // nullable: missing quote state must be visible (FR-CHAIN-003)
+  priceSource     String?
+  priceObservedAt DateTime?
+
+  @@unique([walletId, mint])
+  @@index([walletId])
+}
+
+model PortfolioSnapshot {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  walletId        String
+  totalUsd        String?  // null when no reliable aggregate price
+  quoteCurrency   String   @default("USD")
+  pricedAssetCount Int     @default(0)
+  unpricedAssetCount Int   @default(0)
+  unverifiedAssetCount Int @default(0)
+  snapshotAt      DateTime @default(now())
+  stale           Boolean  @default(false)
+
+  @@index([userId, snapshotAt])
+}
+
+model Consent {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  provider    String
+  scope       String
+  policyVersion String @default("v1")
+  grantedAt   DateTime @default(now())
+  revokedAt   DateTime?
+
+  @@index([userId, provider])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  type        String
+  title       String
+  body        String?
+  payload     String?  // JSON-encoded
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt, readAt])
+}
+
+model DataExportRequest {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  status      String   @default("requested") // requested | processing | ready | failed
+  artifactUrl String?
+  reason      String?
+  requestedAt DateTime @default(now())
+  completedAt DateTime?
+
+  @@index([userId, requestedAt])
+}
+
+model DeletionRequest {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  status      String   @default("requested") // requested | processing | completed | blocked_legal_hold
+  reason      String?
+  requestedAt DateTime @default(now())
+  completedAt DateTime?
+
+  @@index([userId, requestedAt])
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId      String?
+  actor       String
+  action      String
+  resourceType String
+  resourceId  String?
+  reason      String?
+  requestId   String?
+  metadata    String?  // JSON-encoded
+  createdAt   DateTime @default(now())
+
+  @@index([resourceType, resourceId, createdAt])
+  @@index([userId, createdAt])
+}

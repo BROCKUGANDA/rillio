@@ -1,0 +1,31 @@
+Date,Description,Merchant,Amount,Currency,Account
+2025-10-01,Salary deposit October,ACME CORP PAYROLL,4500.00,USD,checking
+2025-10-02,Whole Foods Market #123,WHOLE FOODS,-87.45,USD,checking
+2025-10-03,Starbucks coffee,STARBUCKS STORE 42,-6.75,USD,checking
+2025-10-04,Uber ride downtown,UBER TRIP,-18.20,USD,checking
+2025-10-05,Netflix subscription,NETFLIX.COM,-15.99,USD,checking
+2025-10-06,Rent payment October,PROPERTY MANAGEMENT LLC,-1450.00,USD,checking
+2025-10-07,Shell gas station,SHELL OIL 5532,-52.30,USD,checking
+2025-10-08,Trader Joe's groceries,TRADER JOES #442,-112.18,USD,checking
+2025-10-10,Spotify Premium,SPOTIFY USA,-9.99,USD,checking
+2025-10-12,Electric bill,CITY ELECTRIC,-89.45,USD,checking
+2025-10-14,Amazon order #112-553,AMAZON.COM,-67.32,USD,checking
+2025-10-15,Refund from Amazon,AMAZON REFUND,23.50,USD,checking
+2025-10-18,Chipotle dinner,CHIPOTLE 1234,-14.85,USD,checking
+2025-10-20,Pharmacy prescription,CVS PHARMACY,-23.40,USD,checking
+2025-10-22,Salary deposit November,ACME CORP PAYROLL,4500.00,USD,checking
+2025-10-24,ATM withdrawal,ATM CASH WITHDRAWAL,-200.00,USD,checking
+2025-10-26,Costco bulk shopping,COSTCO WHOLESALE,-234.67,USD,checking
+2025-10-28,Internet bill,COMCAST INTERNET,-79.99,USD,checking
+2025-10-30,Interest credit,INTEREST PAYMENT,1.23,USD,checking
+2025-11-02,Whole Foods Market #123,WHOLE FOODS,-94.20,USD,checking
+2025-11-03,Starbucks coffee,STARBUCKS STORE 42,-7.25,USD,checking
+2025-11-04,Uber ride airport,UBER TRIP,-42.10,USD,checking
+2025-11-05,Netflix subscription,NETFLIX.COM,-15.99,USD,checking
+2025-11-06,Rent payment November,PROPERTY MANAGEMENT LLC,-1450.00,USD,checking
+2025-11-08,Trader Joe's groceries,TRADER JOES #442,-119.45,USD,checking
+2025-11-12,Electric bill,CITY ELECTRIC,-92.15,USD,checking
+2025-11-14,Amazon order #112-891,AMAZON.COM,-82.55,USD,checking
+2025-11-18,Chipotle dinner,CHIPOTLE 1234,-16.20,USD,checking
+2025-11-22,Salary deposit December,ACME CORP PAYROLL,4500.00,USD,checking
+2025-11-25,ATM withdrawal,ATM CASH WITHDRAWAL,-100.00,USD,checking

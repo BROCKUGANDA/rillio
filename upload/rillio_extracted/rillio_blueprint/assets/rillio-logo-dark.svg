@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180" role="img" aria-labelledby="title desc">
+<title id="title">Rillio</title><desc id="desc">Flowing ribbon R symbol and Rillio wordmark on midnight background.</desc>
+<defs><linearGradient id="rillio" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#C5F36A"/><stop offset="1" stop-color="#62E0B5"/></linearGradient></defs>
+<rect width="720" height="180" rx="24" fill="#080E19"/>
+<g fill="none" stroke="url(#rillio)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"><path d="M43 105 C66 60 90 39 130 39 H168 C192 39 207 53 207 72 C207 90 192 104 170 104 H137 C121 104 111 111 102 126 L89 147"/><path d="M111 103 C130 103 143 110 155 123 L177 147"/></g>
+<text x="250" y="118" fill="#F4F7F7" font-family="Space Grotesk, Inter, Arial, sans-serif" font-size="76" font-weight="650" letter-spacing="8">RILLIO</text>
+</svg>

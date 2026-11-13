@@ -1,0 +1,402 @@
+   700→```
+   701→
+   702→Event envelope: `id`, `type`, `occurredAt`, `producer`, `tenantId`, `correlationId`, `schemaVersion`, `data`. Avoid raw descriptions, tokens and secrets in general-purpose events.
+   703→
+   704→Jobs: `csv.parse`, `csv.normalize`, `transactions.dedupe`, `transactions.categorize`, `provider.sync`, `provider.webhook.process`, `wallet.scan`, `wallet.refresh`, `portfolio.price.refresh`, `portfolio.snapshot`, `billing.webhook.process`, `payment.reconcile`, `notification.deliver`, `privacy.export`, `privacy.delete`, `analytics.aggregate`.
+   705→
+   706→Retry transient network errors, 429 and selected 5xx with exponential backoff + full jitter; respect `Retry-After`. Suggested bounded sequence 1/2/4/8/16 seconds plus jitter then DLQ, subject to provider limits. Do not retry validation/authorization/signature/business-rule failures. For submitted chain tx, query signature and blockhash validity before rebuild; never blindly submit another transfer. Every job has timeout, cancellation, attempt cap, structured error and idempotency key.
+   707→
+   708→Outbox: commit domain row and event in one DB transaction; publisher leases/publishes at-least-once; consumers dedupe through inbox; ack only after durable effect; DLQ replay requires reason, actor and audit record.
+   709→
+   710→# 14. Solana architecture
+   711→
+   712→## 14.1 Current client stack
+   713→
+   714→Use current official packages: `@solana/kit` for RPC/transactions/codecs/signers; `@solana/kit-plugin-rpc`; `@solana/kit-plugin-wallet`; `@solana/react`; generated `@solana-program/*` clients. Consider `@solana/keychain` only for a real backend signing requirement after a security design; do not add backend signing by default. Pin compatible versions and re-check the official docs at implementation time.
+   715→
+   716→## 14.2 Read-only wallet path
+   717→
+   718→Browser discovers Wallet Standard wallets → user selects → client obtains public address/capabilities → backend stores association after appropriate proof → scanner reads native/token accounts → parser validates token program/mint/decimals/owner → metadata service checks provenance/spam → pricing adapter returns quotes → portfolio snapshot persists provenance → UI displays stale/unverified/unpriced states.
+   719→
+   720→Never infer token authenticity from symbol/logo. Mint address and token program are canonical identifiers.
+   721→
+   722→## 14.3 RPC resilience
+   723→
+   724→- No public shared RPC in production.
+   725→- Use production RPC with documented limits plus independent fallback.
+   726→- Separate reads, submissions and websocket workloads as necessary.
+   727→- Deadlines, rate limits, circuit breakers.
+   728→- Persist signature/slot cursors and resume without gaps.
+   729→- Reconcile indexer state with RPC periodically.
+   730→- Track provider lag, websocket disconnects and error rates.
+   731→- If sources disagree, mark degraded; do not choose an arbitrary balance.
+   732→
+   733→## 14.4 Future transaction execution
+   734→
+   735→Only after launch gates: build from trusted versioned instructions; validate destination, mint, amount, decimals, fee payer and account ownership; simulate; estimate priority fee with visible maximum; show a human-readable summary; user signs; submit via production RPC; persist signature/blockhash; track `submitted → processed → confirmed → finalized` or failed/expired/unknown; reconcile balances; resolve unknown before retry. Solana fees can still be charged on failed transactions, so UI must disclose that possibility.
+   736→
+   737→## 14.5 Custom program policy
+   738→
+   739→No Anchor/Rust program for MVP. Existing primitives and backend services are sufficient. Add a custom program only when a concrete requirement cannot be met otherwise. Then document authority/account constraints/upgrade authority/emergency pause; add invariant, fuzz and adversarial tests; use LiteSVM / Surfpool; reproducible build and verified deployment; independent review before mainnet.
+   740→
+   741→## 14.6 Token-2022 / RWA
+   742→
+   743→Extensions are optional and some combinations are incompatible. Choose only after requirements mapping. Transfer hooks add program execution to transfers; don't use as decoration or speculative tokenomics. For RWA, verify issuer identity, legal rights, custody, transfer restrictions, valuation, distribution eligibility, redemption, insolvency treatment and jurisdiction. Chain data alone does not establish these facts.
+   744→
+   745→# 15. Payments, billing and monetization
+   746→
+   747→Provider contract examples:
+   748→
+   749→```ts
+   750→interface BillingProvider {
+   751→  createCheckout(input: CreateCheckoutInput): Promise<CheckoutSession>;
+   752→  getSubscription(providerId: string): Promise<ProviderSubscription>;
+   753→  cancelSubscription(providerId: string, atPeriodEnd: boolean): Promise<void>;
+   754→  verifyWebhook(rawBody: Uint8Array, headers: Headers): Promise<VerifiedWebhook>;
+   755→}
+   756→
+   757→interface ChainPaymentVerifier {
+   758→  verifyPayment(input: {
+   759→    signature: string;
+   760→    expectedRecipient: string;
+   761→    expectedMint: string;
+   762→    expectedAmountBaseUnits: bigint;
+   763→    expectedReference: string;
+   764→    minimumCommitment: "confirmed" | "finalized";
+   765→  }): Promise<VerifiedPayment | VerificationFailure>;
+   766→}
+   767→```
+   768→
+   769→These are contracts, not mock implementations. A real adapter needs real credentials and sandbox/live tests. Test adapters must be impossible to register in production.
+   770→
+   771→Subscription lifecycle: `created → checkout_pending → active → past_due → grace_period → canceled/expired`. Webhook is a signal, not unquestioned truth. Verify, dedupe, fetch provider state if necessary, reconcile and update entitlement transactionally. Browser return URL never activates entitlement.
+   772→
+   773→Solana USDC flow: server creates exact recipient/mint/amount/reference/expiry; UI displays token/network/amount/merchant; user approves; frontend submits signature as observation; server independently verifies transaction signature, recipient, mint, amount, reference and finality; unique signature/reference constraints prevent reuse; entitlement only after settlement; wrong/late/underpaid/overpaid payments enter an exception path. Never equate wallet popup success with settlement.
+   774→
+   775→The official Solana payment quickstart documents validation of recipient, amount, token and unique reference; it currently labels `@solana/pay` beta. Isolate behind adapter and re-check maturity before production.
+   776→
+   777→Monetization controls: central server entitlements; server-authoritative prices/tax; explicit proration/grace/retry/refund; visible renewal terms; regional providers only after coverage/settlement/chargeback/licensing review.
+   778→
+   779→# 16. Security, privacy and regulatory readiness
+   780→
+   781→Engineering controls only; this is not legal advice or certification.
+   782→
+   783→## 16.1 Threat model
+   784→
+   785→Account takeover, credential stuffing, session theft, malicious browser extension/compromised wallet, CSV formula injection/parser bombs, cross-tenant IDOR, webhook replay/forgery/out-of-order delivery, RPC/indexer manipulation, stale/spoofed token metadata, token spam/phishing, prompt injection/poisoned social sources, insider support access, secret leakage, dependency/CI compromise, duplicate payment on retry, social manipulation and undisclosed promotion.
+   786→
+   787→## 16.2 Mandatory controls
+   788→
+   789→TLS; encryption at rest for DB/backups/object store/secrets; scoped secret manager and rotation; OIDC/passkeys/MFA; secure session rotation and CSRF; rate limits; strict CORS/CSP/headers/output encoding; server-side object authorization; upload type/size/extension validation, quarantine and scanning where available; CSV formula injection protection on exports; signed webhook raw-body verification and replay prevention; wallet signature and nonce validation; step-up auth for financial actions; immutable audit; PII redaction; dependency pinning, lockfile checks, SAST/secret/container scanning and SBOM; backup encryption/restore tests; incident playbook.
+   790→
+   791→## 16.3 Privacy
+   792→
+   793→Collect minimum necessary data. Do not store bank login credentials; store encrypted provider tokens/reference. Avoid full transaction descriptions / wallet addresses in analytics. Keep portfolio private by default. Separate production support access. Provide access/export/correction/deletion workflows aligned to local law. Define retention. Do not use financial data for external model training without lawful basis, disclosures and consent where required.
+   794→
+   795→## 16.4 Regulatory launch checklist
+   796→
+   797→Before each activity in each jurisdiction obtain qualified local counsel/provider review for open banking and consent; payment initiation/money transmission/stored value/e-money; custody/safeguarding; securities/funds/brokerage/advice/financial promotion; tokenized asset issuance/distribution/redemption; KYC/AML/sanctions/monitoring/records; consumer credit/deposit/savings wording; privacy/cross-border/data localization/marketing; tax, disclosures and complaints. Never claim “regulated”, “licensed”, “compliant”, “insured”, “custody-safe” or “investment-ready” without precise entity/activity/permission/jurisdiction support and counsel approval.
+   798→
+   799→# 17. Reliability / operations
+   800→
+   801→Use OpenTelemetry-compatible metrics/traces/logs; correlate browser action → API → DB → outbox → worker → provider → chain signature. Metrics: API rate/error/latency/saturation; DB pool/locks/slow query/replica lag; queue depth/oldest age/retries/DLQ; import throughput/rejections; provider success/latency/auth/webhook lag; RPC health/slot lag/websocket reconnects; valuation freshness/unpriced ratio; billing reconciliation exceptions; auth anomalies. Logs structured JSON and redacted; high-cardinality IDs in traces/logs, not metric labels.
+   802→
+   803→Page on core availability/error budget burn, DB outage, import SLO breach, payment mismatch/duplicate, unexpected signing authority, RPC gap, credential exposure and backup/restore failure. Dashboard/ticket for provider outage, stale prices, poor category confidence, CSV rejection and support surge.
+   804→
+   805→Runbooks required: API outage/rollback; DB failover/restore; import backlog/poisoned CSV; provider credential expiry/consent revoke; RPC outage/indexer lag; payment under/overpayment or wrong token; duplicate payment/entitlement; account takeover; export/deletion failure; secret leak/rotation; abuse/impersonation; security incident/customer comms.
+   806→
+   807→# 18. Error taxonomy and state machines
+   808→
+   809→Stable codes drive localized messages; never key behaviour on human-readable text.
+   810→
+   811→| Code | HTTP/domain | Meaning | Retry | Recovery |
+   812→|---|---|---|---|---|
+   813→| `AUTH_SESSION_EXPIRED` | 401 | Session invalid | No | Sign in |
+   814→| `AUTH_STEP_UP_REQUIRED` | 403 | Re-auth needed | No | Verify identity |
+   815→| `AUTH_WALLET_CHALLENGE_EXPIRED` | 401 | Challenge expired | No | New challenge |
+   816→| `AUTH_WALLET_SIGNATURE_INVALID` | 401 | Wrong signature | No | Sign exact message |
+   817→| `AUTH_NONCE_REPLAYED` | 409 | Challenge reused | No | New challenge |
+   818→| `AUTH_ACCESS_DENIED` | 403 | No permission | No | Return to permitted area |
+   819→| `DATA_IMPORT_FILE_TOO_LARGE` | 413 | Size cap exceeded | No | Reduce file |
+   820→| `DATA_IMPORT_UNSUPPORTED_FORMAT` | 415 | Wrong format | No | Use CSV |
+   821→| `DATA_IMPORT_INVALID_COLUMN_MAPPING` | 422 | Required columns absent | No | Map date/amount |
+   822→| `DATA_IMPORT_ROW_INVALID` | 422 | Invalid row(s) | No | Download errors |
+   823→| `DATA_IMPORT_DUPLICATE` | 409 | Already imported | No | View existing job |
+   824→| `DATA_IMPORT_PROCESSING` | 202 | Still processing | Poll | View status |
+   825→| `DATA_PROVIDER_REAUTH_REQUIRED` | 409 | Access expired | No | Reconnect |
+   826→| `DATA_PROVIDER_RATE_LIMITED` | 503 | Rate limited | Yes | Retry after delay |
+   827→| `DATA_PROVIDER_UNAVAILABLE` | 503 | Provider down | Yes | Cached data/manual import |
+   828→| `TXN_NOT_FOUND` | 404 | Missing transaction | No | Refresh |
+   829→| `TXN_CATEGORY_INVALID` | 422 | Invalid category | No | Select valid category |
+   830→| `GOAL_TARGET_INVALID` | 422 | Invalid goal | No | Review values |
+   831→| `GOAL_CURRENCY_MISMATCH` | 409 | Currency conflict | No | Change currency |
+   832→| `CHAIN_WALLET_UNSUPPORTED` | 422 | Wallet unsupported | No | Choose supported wallet |
+   833→| `CHAIN_RPC_UNAVAILABLE` | 503 | RPC unavailable | Yes | Show last update |
+   834→| `CHAIN_DATA_STALE` | 503 | Data too old | Yes | Refresh later |
+   835→| `CHAIN_ASSET_UNVERIFIED` | Domain | No trusted verification | No | View unverified |
+   836→| `CHAIN_TX_SIMULATION_FAILED` | 422 | Simulation failed | No | Review transaction |
+   837→| `CHAIN_TX_BLOCKHASH_EXPIRED` | 409 | Blockhash expired | Conditional | Check status first |
+   838→| `CHAIN_TX_STATUS_UNKNOWN` | 202 | Outcome unresolved | No blind retry | Query signature |
+   839→| `CHAIN_TX_FAILED` | Domain | Chain failure | No | Explain fees/status |
+   840→| `PAYMENT_INTENT_EXPIRED` | 410 | Reference expired | No | New payment request |
+   841→| `PAYMENT_AMOUNT_MISMATCH` | 409 | Wrong amount | No | Exception/refund review |
+   842→| `PAYMENT_MINT_MISMATCH` | 409 | Wrong token | No | Do not grant entitlement |
+   843→| `PAYMENT_RECIPIENT_MISMATCH` | 409 | Wrong recipient | No | Exception review |
+   844→| `PAYMENT_SIGNATURE_REPLAYED` | 409 | Signature reused | No | View original receipt |
+   845→| `PAYMENT_FINALITY_PENDING` | 202 | Not final enough | Poll | Keep pending |
+   846→| `BILLING_WEBHOOK_INVALID` | 401 | Invalid webhook | No | Security alert |
+   847→| `BILLING_RECONCILIATION_REQUIRED` | 202 | State mismatch | Background | Pending entitlement |
+   848→| `SOCIAL_CONTENT_REJECTED` | 422 | Content blocked | No | Edit/appeal |
+   849→| `PRIVACY_EXPORT_PENDING` | 202 | Export running | Poll | Return later |
+   850→| `PRIVACY_DELETION_REVIEW` | 202 | Retention review | No | Show status |
+   851→| `RATE_LIMITED` | 429 | Limit exceeded | Yes | Respect retry-after |
+   852→| `IDEMPOTENCY_CONFLICT` | 409 | Key reused with other payload | No | New operation |
+   853→| `INTERNAL_UNEXPECTED` | 500 | Unexpected fault | Maybe | Provide request ID |
+   854→
+   855→Transaction states: `draft → validated → simulated → awaiting_signature → signed → submitted → processed → confirmed → finalized`; alternatives `rejected`, `simulation_failed`, `failed`, `expired`, `cancelled`; `unknown` is reconciliation, never success/failure.
+   856→
+   857→Import states: `created → uploaded → validating → parsing → normalizing → deduplicating → importing → completed`; failure `rejected`, `partial_success`, `failed`, `cancelled`. Every terminal state reports counts and error file as appropriate.
+   858→
+   859→Payment states: `created → awaiting_payment → observed → verifying → confirmed → reconciled → entitlement_granted`; exceptions `expired`, `wrong_asset`, `wrong_amount`, `wrong_recipient`, `duplicate`, `under_review`, `refunded`.
+   860→
+   861→# 19. Testing strategy
+   862→
+   863→**Unit:** money parsing/scale/rounding; categorization precedence; recurring detection; goal math; wallet challenge/domain/replay; token decimals; state machines; error mapping.
+   864→
+   865→**Integration:** Postgres migrations/constraints/tenant auth; Redis retry/DLQ; outbox/inbox; CSV object storage and error report; provider/RPC adapter contracts; billing webhook signature/dedupe/reconciliation.
+   866→
+   867→**E2E:** signup→CSV→category correction→dashboard→goal; signup→wallet→challenge→portfolio→disconnect; checkout→webhook→entitlement→cancel; privacy export/deletion; malformed CSV, stale RPC, cancelled wallet and duplicate webhook.
+   868→
+   869→**Load/resilience:** 100k transaction import; concurrent dashboard/portfolio refresh; provider 429/timeouts/malformed response; RPC failover/websocket disconnect; worker restart; DB restore/failover; burst and out-of-order webhooks.
+   870→
+   871→Solana: Devnet for wallet integration; LiteSVM for custom program in-process tests; Surfpool/local validator for integration as appropriate. Test blockhash expiry, duplicate submission, insufficient fee SOL, ATA creation, wrong mint, frozen/unsupported account, Token-2022 incompatibility, timeout and confirmation progression. Label Devnet and never imply test assets have real value.
+   872→
+   873→Quality gates: strict typing, lint/format/typecheck/build, no unresolved critical/high vuln without approved exception, API contracts pass, migration recovery tested, E2E on supported screens, accessibility and keyboard/screen-reader review, no P0 bug.
+   874→
+   875→# 20. Deployment and CI/CD
+   876→
+   877→Environments: local (test adapters), CI (ephemeral DB/Redis), dev (sandbox provider), staging (prod-like, Devnet, payment sandbox), production (mainnet, approved live providers, real secrets, strict flags). Never reuse devnet credentials/mints/webhooks in production.
+   878→
+   879→Pipeline: PR format/lint/typecheck/unit/secret/SAST/dependency scans; immutable build + SBOM; integration tests; staging deploy; migration safety + E2E; human production approval; backward-compatible migrations; canary; threshold rollback when safe; smoke tests/audit.
+   880→
+   881→Migrations use expand/migrate/contract, resumable backfills and mixed-version safety. Feature flags are server evaluated and scoped by environment/region/cohort. Flag-off must block API action, not just hide button.
+   882→
+   883→# 21. Investor proof plan
+   884→
+   885→The story is not “we built every financial feature.” It is: spending/saving/ownership are fragmented; Rillio's wedge turns real financial history into a plan and understandable assets; Solana supports ownership/settlement where relevant; trust and contextual financial data compound; subscription first; regulated execution only through approvals; proof is activation, repeat progress, data accuracy, portfolio freshness, retention and paid conversion.
+   886→
+   887→Demo: sign in; import genuine sanitized CSV; show validation/dedupe; correct category and recompute; create goal; connect Devnet wallet read-only; show provenance/timestamp; disconnect; show privacy/audit boundary. Never stage fake real-money transfer or display invented balances as live funds.
+   888→
+   889→---
+   890→# D. STAFF ENGINEER / SYSTEMS ARCHITECT IMPLEMENTATION CONTRACT
+   891→
+   892→# 22. Master implementation prompt
+   893→
+   894→## START OF IMPLEMENTATION MASTER PROMPT
+   895→
+   896→You are the **Staff Software Engineer, Principal Systems Architect, Security Engineer, Product Engineer and Forward-Deployed Engineer** responsible for implementing Rillio in the supplied repository.
+   897→
+   898→Your task is to turn the existing repository into a working, testable, production-oriented implementation of this specification. Understand the current code before changing it, preserve useful existing functionality, implement real end-to-end flows, and prove what works with tests and runtime evidence.
+   899→
+   900→### 22.1 Mission
+   901→
+   902→Build a polished consumer application connecting real imported/provider-sourced spending data, deterministic categorisation and cash-flow insights, user-defined savings goals, non-custodial read-only Solana portfolio visibility, safe subscription architecture, privacy, security, operational tooling and evidence-driven release controls.
+   903→
+   904→Implement the two-week MVP first. Do not attempt every future capability simultaneously. Make the MVP correct and demonstrable, while preserving clean extension seams.
+   905→
+   906→### 22.2 Non-negotiable rules
+   907→
+   908→1. **Inspect before editing.** Never assume repository structure, framework, routes, schema, provider, deployment or test commands.
+   909→2. **Preserve working code.** No rewrite without an ADR and concrete reason.
+   910→3. **No fabricated integrations.** Never claim bank, wallet, RPC, billing or payment functionality works without real adapter configuration and verification.
+   911→4. **No mock production paths.** Mocks/fakes only in tests or clearly isolated local-only adapters. Production fails closed if required configuration is absent.
+   912→5. **No fake financial data.** Demo data must be unmistakably labelled and isolated from user records.
+   913→6. **No float arithmetic for money/token base units.**
+   914→7. **No private-key custody.** Never request/store seed phrases or user private keys; no secrets in client bundle, repository, logs or screenshots.
+   915→8. **No unapproved money movement.** MVP wallet capability is read-only; no auto-trade, transfer, recurring debit, asset issuance or fund custody.
+   916→9. **No hidden failure.** Provider/RPC error must not become empty success or zero balance. Show last-known data as stale.
+   917→10. **No duplicate financial action.** Idempotency, status reconciliation and audit records are mandatory.
+   918→11. **No insecure admin shortcut.** No universal admin, arbitrary balance editing or backdoor.
+   919→12. **No DONE without evidence.** A feature is complete only when implemented, tested, integrated, observed and documented.
+   920→13. **No unverified code dumps.** Make small changes, run tests, inspect results after each phase.
+   921→14. **No false compliance claims.** Legal requirements are jurisdiction-specific. Gated features remain disabled until approved.
+   922→15. **No non-essential questions.** Use reasonable defaults and document assumptions. Stop only for genuine credential, account, provider, legal or product blockers.
+   923→
+   924→### 22.3 Phase 0: repository reconnaissance
+   925→
+   926→Before modifying files, inspect:
+   927→- repository root, Git status, branch and uncommitted changes;
+   928→- top-level folders, manifests, runtime, package manager and lockfiles;
+   929→- routes, UI, state management, design tokens and existing journeys;
+   930→- database, schema, migrations and auth/authorization;
+   931→- API routes/contracts and external adapters;
+   932→- queues, scheduler, cache, object store and event pipeline;
+   933→- tests, coverage, lint, typecheck and build scripts;
+   934→- CI/CD, deployment and environment variable names (never print values);
+   935→- TODOs, stubs, hardcoded fixtures, fake API responses, dead links and inert buttons;
+   936→- security-sensitive flows and known vulnerabilities.
+   937→
+   938→Run read-only commands first. Do not overwrite user work. Record the baseline install/lint/typecheck/test/build commands and outputs. Separate pre-existing failures from regressions introduced by your changes.
+   939→
+   940→Create:
+   941→- `docs/implementation/REPOSITORY_AUDIT.md`
+   942→- `docs/implementation/BASELINE.md`
+   943→- `docs/adr/0001-architecture-baseline.md`
+   944→- `docs/implementation/ASSUMPTIONS_AND_BLOCKERS.md`
+   945→
+   946→**Gate 0:** architecture and baseline are documented before implementation. If a command cannot run, state why and continue with available evidence.
+   947→
+   948→### 22.4 Phase 1: traceable implementation plan
+   949→
+   950→For every requirement record requirement ID, current status, files/modules, schema/API impact, security/privacy impact, tests, metric/evidence, dependency and risk. Create `docs/implementation/EXECUTION_PLAN.md` with phases, task IDs, dependencies, verification commands and completion checkboxes. Select the smallest compatible architecture. If the existing stack differs, document why and adapt rather than blindly replacing it.
+   951→
+   952→**Gate 1:** every MVP P0 is mapped and provider/jurisdiction blockers identified. No feature may disappear because it is difficult.
+   953→
+   954→### 22.5 Phase 2: quality foundations
+   955→
+   956→Implement/repair strict typing, formatting/lint, runtime env validation, structured logging with PII/secret redaction, request correlation IDs, standard error envelope, input validation, health/readiness, migration workflow, isolated test fixtures, secure headers, CSP and CORS.
+   957→
+   958→Provide `.env.example` with names and safe placeholders only. Fail production startup if required secrets are missing. Never expose secrets through public client variables. Document secret scopes and rotation. Record ADRs for infrastructure decisions; do not add a dependency without explaining the need.
+   959→
+   960→**Gate 2:** app boots in local/test, quality commands pass or baseline exceptions documented, no secrets in logs/build output.
+   961→
+   962→### 22.6 Phase 3: identity and authorization
+   963→
+   964→Implement registration/login/logout and session lifecycle with existing identity provider or secure OIDC; secure cookies/rotation; revocation; account status; RBAC/ABAC; per-record ownership; step-up auth; consent; rate limits. Wallet challenge is separate from standard login.
+   965→
+   966→Test expired/revoked session, cross-user IDOR, missing role, CSRF/origin, wallet nonce replay, wrong domain, expired challenge and invalid signature.
+   967→
+   968→**Gate 3:** every user endpoint enforces server-side ownership. Wallet association requires valid proof if proof is required.
+   969→
+   970→### 22.7 Phase 4: database and transaction ingestion
+   971→
+   972→Create migrations for users, profiles, consent, import jobs, raw/normalized transactions, categories/history, merchant aliases, import errors, idempotency, audit and outbox.
+   973→
+   974→CSV pipeline:
+   975→1. Authenticate and authorize.
+   976→2. Create import job and short-lived upload target.
+   977→3. Validate size, MIME, extension and filename.
+   978→4. Store in private quarantine.
+   979→5. Scan/validate where available.
+   980→6. Parse asynchronously with strict row/column/size limits.
+   981→7. Detect dialect, delimiter and encoding.
+   982→8. Require explicit date/amount/currency mapping.
+   983→9. Normalize dates, direction and exact monetary values.
+   984→10. Persist raw row evidence with import ID/row number.
+   985→11. Deduplicate using source ID/fingerprint.
+   986→12. Import valid rows transactionally in batches.
+   987→13. Record accepted/duplicate/rejected counts.
+   988→14. Produce rejected-row report.
+   989→15. Mark terminal state only when durable writes complete.
+   990→
+   991→Protect against formula injection, huge fields, malformed Unicode, ambiguous dates, decimal/group separators, reversed sign conventions, overlap, refunds, pending rows, multi-currency, time-zone boundaries and worker retries after partial commit. Never silently drop rows; never duplicate on retry.
+   992→
+   993→**Gate 4:** tests cover valid, malformed, duplicate, locale ambiguous, oversized, partial, retry and cross-user cases. Totals reconcile to accepted records.
+   994→
+   995→### 22.8 Phase 5: categorization, insights and goals
+   996→
+   997→Rule precedence: user correction → user rule → verified merchant mapping → deterministic heuristic → uncategorized. Store category history and reason. Any optional AI is advisory, confidence-labelled, minimized, reviewable and unable to move money.
+   998→
+   999→Cash flow uses exact arithmetic and explicit treatment of transfers, refunds, pending items, fees and missing FX rates. Goals are planning records, not a custody ledger. Distinguish target, planned contribution, user-reported starting amount, verified external transfer (future) and actual held funds (not MVP).
+  1000→
+  1001→Projections are deterministic, versioned, exact, time-zone/currency aware, non-guaranteed and do not assume yield by default. Reject impossible values.
+  1002→
+  1003→**Gate 5:** corrections recompute insights; goal planning never changes actual balances; math boundary tests pass.
+  1004→
+  1005→### 22.9 Phase 6: Solana read-only wallet and portfolio
+  1006→
+  1007→Read current official docs for Kit, Next.js, React, Wallet Standard, RPC endpoints/commitments, fees, transactions, production signing and production readiness. Pin compatible `@solana/kit`, `@solana/kit-plugin-rpc`, `@solana/kit-plugin-wallet`, `@solana/react` and generated clients when required.
+  1008→
+  1009→Implement one typed Kit client; wallet discovery/connect/disconnect; account changes; optional signed challenge; public address association; production RPC adapter + fallback; native SOL and token account retrieval; exact base-unit decoding; mint/program/owner validation; verified metadata and price adapters; freshness timestamps; snapshots; unknown/unpriced/spam-token states.
+  1010→
+  1011→Never request seed phrase/key, infer authenticity from token logo/name, treat RPC failure as zero, use public shared RPC in production, add a backend keypair for users or add send/trade in MVP.
+  1012→
+  1013→Test unsupported wallet, wrong cluster, account change, disconnect, RPC timeout, stale data, duplicate observation, wrong mint, decimals, unpriced asset and suspicious token.
+  1014→
+  1015→**Gate 6:** real Devnet read-only data works; no transfer path is reachable; production rejects missing provider config/public RPC.
+  1016→
+  1017→### 22.10 Phase 7: billing and monetization
+  1018→
+  1019→Create provider interface, plan/entitlement model, checkout session and webhook pipeline. If real credentials are available, integrate sandbox and verify signatures. Otherwise implement only contract and a visibly disabled checkout; do not simulate payment success.
+  1020→
+  1021→Webhook: verify raw body/signature, timestamp/replay, dedupe ID, persist reference, reconcile provider state, update entitlement transactionally, retry safely and alert on mismatch. Browser return URLs never grant access.
+  1022→
+  1023→USDC checkout only after exact recipient/mint/amount/reference/expiry/finality server checks. Isolate beta packages and re-check maturity.
+  1024→
+  1025→**Gate 7:** no entitlement from browser redirect or unverified wallet message. Duplicate webhook creates one transition.
+  1026→
+  1027→### 22.11 Phase 8: UI and design system
+  1028→
+  1029→Build tokens/theme/typography; responsive shell/navigation; buttons/inputs/cards/alerts/dialogs/sheets; transaction list/import; dashboard/charts; goal list/wizard/detail; wallet/portfolio; privacy/settings/billing; loading/empty/error/stale/permission states; mobile/accessibility.
+  1030→
+  1031→Follow midnight ink, lime/mint accent, calm editorial typography, restrained gradients and clear financial figures. No casino motifs. Every button works or is disabled with explanation. No dead links, invented progress percentages or random charts. Respect reduced motion; charts provide accessible summaries/tables.
+  1032→
+  1033→**Gate 8:** primary journeys work at desktop/tablet/mobile and keyboard; no overflow, clipped dialogs, unreadable contrast or inaccessible status.
+  1034→
+  1035→### 22.12 Phase 9: operations and observability
+  1036→
+  1037→Implement redacted structured logs, traces, correlation, API/worker metrics, import/provider/chain health, payment exception reconciliation, audited support access, DLQ inspection/replay, privacy export/deletion monitoring, health checks, alerts and runbooks. Support cannot edit balances.
+  1038→
+  1039→**Gate 9:** injected provider outage, queue backlog and RPC outage produce alert and safe degraded state; runbooks exercised.
+  1040→
+  1041→### 22.13 Phase 10: end-to-end verification and hardening
+  1042→
+  1043→Run unit/property tests for financial math/state machines; DB/queue/outbox/provider integration; MVP E2E; CSV/dashboard/portfolio load; timeout/429/5xx/disconnect/duplicate/partial fault injection; accessibility; SAST/DAST; dependency/license review; authorization/privacy review; backup restore; staging smoke tests.
+  1044→
+  1045→Create requirement-to-code-to-test-to-evidence traceability matrix.
+  1046→
+  1047→**Gate 10:** all P0 acceptance criteria pass. Any P0 failure blocks release or is clearly identified as an external blocker; never silently waive it.
+  1048→
+  1049→### 22.14 Phase 11: deployment readiness
+  1050→
+  1051→Verify production RPC/fallback; real provider credentials/scopes; domains/redirects/webhook allowlists; no Devnet/test keys in production; secret rotation and backup; migration dry run; incident/rollback rehearsal; high-risk flags off; legal/provider approvals documented; support/refund/privacy/incident workflows ready.
+  1052→
+  1053→The agent cannot self-certify regulatory permission. Report missing approvals and leave gated features disabled.
+  1054→
+  1055→### 22.15 Definition of DONE
+  1056→
+  1057→A requirement is DONE only if UI, API/domain, persistence/migrations, authorization, privacy, failure/recovery, tests, observability, documentation and acceptance evidence all exist. Use statuses `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `IMPLEMENTED_NOT_VERIFIED`, `VERIFIED`, `RELEASED`. Never claim 100% completion unless agreed scope is verified and release gates pass.
+  1058→
+  1059→### 22.16 Required final report
+  1060→
+  1061→Create `docs/implementation/FINAL_ENGINEERING_REPORT.md` with:
+  1062→1. Executive summary and delivered scope.
+  1063→2. Implemented architecture and deviations.
+  1064→3. Requirement traceability matrix.
+  1065→4. Routes/APIs/tables implemented.
+  1066→5. Actual integrations and tested environments.
+  1067→6. Exact test commands, results, pass/fail counts and artifacts.
+  1068→7. Security findings/remediation.
+  1069→8. Load results and bottlenecks.
+  1070→9. Known bugs, limitations and blockers.
+  1071→10. Provider credentials/approvals still required (names only, never values).
+  1072→11. Deployment and rollback.
+  1073→12. Runbooks and dashboards.
+  1074→13. Redacted actual screenshots/recordings.
+  1075→14. Environment status: local, staging, Devnet or production.
+  1076→15. Reproduction commands for another engineer.
+  1077→
+  1078→Never claim production readiness merely because the build succeeds.
+  1079→
+  1080→## END OF IMPLEMENTATION MASTER PROMPT
+  1081→
+  1082→# E. ENGINEERING EXECUTION CHECKLIST
+  1083→
+  1084→# 23. Staff engineer release checklist
+  1085→
+  1086→**Product:** first customer/geography explicit; MVP separate from gated features; plans never represented as held funds; portfolio provenance/freshness; social private by default; no copy trading.  
+  1087→**Design:** vector brand exports; dark/light tokens; keyboard/reduced-motion; loading/empty/error/stale states on every data page; responsive breakpoints; no dead controls or random charts.  
+  1088→**Data:** exact money; raw/normalized separation; import idempotency/resume; encrypted provider tokens; outbox/inbox; cross-tenant authorization tests; verified cursor pagination/query plans.  
+  1089→**Solana:** Kit/React pinned; connection distinct from login/signing; no key collection; mint/program validation; price timestamps; primary/fallback production RPC; no shared public RPC in prod; unknown transaction reconciled before retry; no custom program without need.  
+  1090→**Payments:** signed webhooks; server reconciliation; exact server verification of amount/mint/recipient/reference; duplicate tests; refund policy; no hidden fees.  
+  1091→**Security/ops:** secret manager/rotation; rate limits/MFA/session revoke; CSP/CORS/CSRF/input validation; PII redaction; backup restore; incident/rollback runbooks; SAST/DAST/container scans; external review before material customer value.  
+  1092→**Launch:** legal/provider approval in target geography; provider coverage and support verified; terms/privacy/risk reviewed; support ready; live demo uses real, labelled test/consented data; high-risk features disabled.
+  1093→
+  1094→# 24. Risk register
+  1095→
+  1096→| Risk | Impact | Mitigation |
+  1097→|---|---|---|
+  1098→| Bank coverage unavailable | High | CSV MVP, adapters, verify market first |
+  1099→| Goal mistaken as held funds | High | planned vs transferred wording everywhere |
+
+[showing lines 700-1099 of 1289; use offset=1100 with limit to continue reading]
