@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch, type Session, type Counts } from "@/lib/api-client";
-import { AuthScreen } from "@/components/rillio/auth-screen";
+import { Landing } from "@/components/rillio/landing";
+import { AuthModal } from "@/components/rillio/auth-modal";
 import { HomeView } from "@/components/rillio/home-view";
 import { ActivityView } from "@/components/rillio/activity-view";
 import { GoalsView } from "@/components/rillio/goals-view";
@@ -26,8 +27,16 @@ import {
   CreditCard,
 } from "lucide-react";
 import { toast } from "sonner";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 
 type View = "home" | "activity" | "goals" | "portfolio" | "connections" | "billing" | "settings";
+
+const viewMotion = {
+  initial: { opacity: 0, y: 14, filter: "blur(4px)" },
+  animate: { opacity: 1, y: 0, filter: "blur(0px)" },
+  exit: { opacity: 0, y: -8, filter: "blur(4px)" },
+  transition: { duration: 0.32, ease: [0.2, 0.8, 0.2, 1] as const },
+};
 
 export default function Page() {
   const [user, setUser] = useState<Session | null>(null);
@@ -36,6 +45,9 @@ export default function Page() {
   const [view, setView] = useState<View>("home");
   const [unread, setUnread] = useState(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("register");
+  const reduce = useReducedMotion();
 
   const refreshMe = useCallback(async () => {
     try {
@@ -53,7 +65,7 @@ export default function Page() {
     refreshMe();
   }, [refreshMe]);
 
-  // Handle deep-link query params (?view=billing&billing=return)
+  // Deep-link query params (?view=billing&billing=return)
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -61,18 +73,12 @@ export default function Page() {
     if (v && ["home", "activity", "goals", "portfolio", "connections", "billing", "settings"].includes(v)) {
       setView(v as View);
       const billing = params.get("billing");
-      if (billing) {
-        if (billing === "return") {
-          setTimeout(() => toast.info("Checkout complete. Verifying webhook…", { description: "If Plus isn't active yet, the webhook is still processing." }), 500);
-        } else if (billing === "cancelled") {
-          toast.warning("Checkout cancelled.");
-        } else if (billing === "verification_failed") {
-          toast.error("Checkout verification failed.");
-        }
+      if (billing === "return") {
+        setTimeout(() => toast.info("Checkout complete. Verifying onchain payment…", { description: "Plus unlocks only after the server verifies the transfer." }), 500);
+      } else if (billing === "cancelled") {
+        toast.warning("Checkout cancelled.");
       }
-      // Clean URL
-      const newUrl = window.location.pathname;
-      window.history.replaceState({}, "", newUrl);
+      window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
 
@@ -102,7 +108,26 @@ export default function Page() {
   }
 
   if (!user) {
-    return <AuthScreen onAuthed={refreshMe} />;
+    return (
+      <>
+        <Landing
+          onGetStarted={() => {
+            setAuthMode("register");
+            setAuthOpen(true);
+          }}
+          onSignIn={() => {
+            setAuthMode("login");
+            setAuthOpen(true);
+          }}
+        />
+        <AuthModal
+          open={authOpen}
+          onOpenChange={setAuthOpen}
+          onAuthed={refreshMe}
+          mode={authMode}
+        />
+      </>
+    );
   }
 
   const navItems: { id: View; label: string; icon: React.ReactNode; badge?: number }[] = [
@@ -156,32 +181,46 @@ export default function Page() {
           <Menu size={20} />
         </button>
       </div>
-      {mobileNavOpen && (
-        <div className="lg:hidden fixed inset-0 z-40 bg-ink-950/80 backdrop-blur-sm" onClick={() => setMobileNavOpen(false)}>
-          <div className="absolute right-0 top-0 bottom-0 w-64 bg-ink-900 border-l border-white/5 p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="mt-14 space-y-1">
-              {navItems.map((n) => (
-                <NavButton
-                  key={n.id}
-                  active={view === n.id}
-                  label={n.label}
-                  icon={n.icon}
-                  badge={n.badge}
-                  onClick={() => { setView(n.id); setMobileNavOpen(false); }}
-                />
-              ))}
-              <div className="border-t border-white/5 my-3" />
-              <Button variant="ghost" size="sm" onClick={signOut} className="w-full justify-start text-slate-300">
-                <LogOut size={14} className="mr-2" /> Sign out
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {mobileNavOpen && (
+          <motion.div
+            className="lg:hidden fixed inset-0 z-40 bg-ink-950/80 backdrop-blur-sm"
+            onClick={() => setMobileNavOpen(false)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="absolute right-0 top-0 bottom-0 w-64 bg-ink-900 border-l border-white/5 p-4"
+              onClick={(e) => e.stopPropagation()}
+              initial={{ x: 280 }}
+              animate={{ x: 0 }}
+              exit={{ x: 280 }}
+              transition={{ type: "spring", stiffness: 320, damping: 30 }}
+            >
+              <div className="mt-14 space-y-1">
+                {navItems.map((n) => (
+                  <NavButton
+                    key={n.id}
+                    active={view === n.id}
+                    label={n.label}
+                    icon={n.icon}
+                    badge={n.badge}
+                    onClick={() => { setView(n.id); setMobileNavOpen(false); }}
+                  />
+                ))}
+                <div className="border-t border-white/5 my-3" />
+                <Button variant="ghost" size="sm" onClick={signOut} className="w-full justify-start text-slate-300">
+                  <LogOut size={14} className="mr-2" /> Sign out
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Main content */}
       <main className="flex-1 min-w-0 flex flex-col">
-        {/* Top bar (desktop) */}
         <header className="hidden lg:flex items-center justify-between px-8 py-4 border-b border-white/5 bg-ink-900/50 backdrop-blur-sm sticky top-0 z-10">
           <div className="text-sm text-slate-400">
             <span className="text-slate-300">{user.displayName || "Rillio member"}</span> · {user.baseCurrency}
@@ -199,13 +238,23 @@ export default function Page() {
         </header>
 
         <div className="flex-1 p-4 lg:p-8 pt-20 lg:pt-8">
-          {view === "home" && <HomeView user={user} onNavigate={(v) => setView(v as View)} />}
-          {view === "activity" && <ActivityView user={user} />}
-          {view === "goals" && <GoalsView user={user} />}
-          {view === "portfolio" && <PortfolioView user={user} />}
-          {view === "connections" && <ConnectionsView onNavigate={(v) => setView(v as View)} />}
-          {view === "billing" && <BillingView />}
-          {view === "settings" && <SettingsView user={user} onSignOut={signOut} />}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={view}
+              initial={reduce ? { opacity: 0 } : viewMotion.initial}
+              animate={reduce ? { opacity: 1 } : viewMotion.animate}
+              exit={reduce ? { opacity: 0 } : viewMotion.exit}
+              transition={viewMotion.transition}
+            >
+              {view === "home" && <HomeView user={user} onNavigate={(v) => setView(v as View)} />}
+              {view === "activity" && <ActivityView user={user} />}
+              {view === "goals" && <GoalsView user={user} />}
+              {view === "portfolio" && <PortfolioView user={user} />}
+              {view === "connections" && <ConnectionsView onNavigate={(v) => setView(v as View)} />}
+              {view === "billing" && <BillingView />}
+              {view === "settings" && <SettingsView user={user} onSignOut={signOut} />}
+            </motion.div>
+          </AnimatePresence>
         </div>
 
         <footer className="mt-auto border-t border-white/5 py-4 px-8 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">

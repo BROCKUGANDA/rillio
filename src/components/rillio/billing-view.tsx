@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * Billing — Solana-native payments only (USDC + native SOL).
+ * No card processor. Entitlement is granted exclusively after
+ * server-side onchain verification of the transfer.
+ */
+
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,9 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api-client";
 import { toast } from "sonner";
-import { formatMinor } from "@/lib/money";
 import { ShieldIcon, SourceIcon, SparkIcon } from "@/components/rillio/icons";
-import { CheckCircle2, AlertCircle, Zap, ExternalLink, CreditCard, Coins, RefreshCw } from "lucide-react";
+import { CheckCircle2, AlertCircle, ExternalLink, Coins, Wallet as WalletIcon, RefreshCw, Copy, Link2 } from "lucide-react";
 
 type Plan = {
   id: string;
@@ -23,8 +28,8 @@ type Plan = {
   currency: string;
   interval: string;
   features: Record<string, string>;
-  stripePriceId: string | null;
   usdcRecipient: string | null;
+  solRecipient: string | null;
 };
 
 type Subscription = {
@@ -36,18 +41,19 @@ type Subscription = {
   plan: Plan;
 } | null;
 
-type StripeConfig = {
-  configured: boolean;
-  publishableKey: string | null;
-  webhookSecret: string | null;
-  mode: "test" | "live" | "disabled";
+type PaymentsConfig = {
+  protocol: string;
+  providers: string[];
+  usdcConfigured: boolean;
+  solConfigured: boolean;
+  note: string;
 };
 
 type BillingData = {
   plans: Plan[];
   subscription: Subscription;
   entitlements: Record<string, string>;
-  stripe: StripeConfig;
+  payments: PaymentsConfig;
 };
 
 type UsdcIntent = {
@@ -60,17 +66,34 @@ type UsdcIntent = {
   currency: string;
   expiry: string;
   instructions: string[];
+  note?: string;
 };
+
+type SolIntent = {
+  intentId: string;
+  reference: string;
+  recipient: string;
+  lamports: string;
+  solAmount: string;
+  quotedSolPrice: number;
+  pricingMode: "oracle" | "operator_fixed";
+  expiry: string;
+  solanaPayUrl: string;
+  instructions: string[];
+  note?: string;
+};
+
+type SheetKind = "usdc" | "sol" | null;
 
 export function BillingView() {
   const [data, setData] = useState<BillingData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [checkoutProvider, setCheckoutProvider] = useState<"stripe" | "usdc">("stripe");
+  const [sheetKind, setSheetKind] = useState<SheetKind>(null);
   const [usdcIntent, setUsdcIntent] = useState<UsdcIntent | null>(null);
-  const [usdcSignature, setUsdcSignature] = useState("");
-  const [usdcVerifying, setUsdcVerifying] = useState(false);
-  const [creatingCheckout, setCreatingCheckout] = useState(false);
+  const [solIntent, setSolIntent] = useState<SolIntent | null>(null);
+  const [signature, setSignature] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [creatingCheckout, setCreatingCheckout] = useState<"usdc" | "sol" | null>(null);
 
   async function load() {
     setLoading(true);
@@ -86,94 +109,62 @@ export function BillingView() {
 
   useEffect(() => { load(); }, []);
 
-  async function startCheckout(provider: "stripe" | "usdc") {
-    setCheckoutProvider(provider);
-    setCreatingCheckout(true);
-    setUsdcIntent(null);
+  async function startCheckout(provider: "usdc" | "sol") {
+    setCreatingCheckout(provider);
+    setSignature("");
     try {
-      const res = await apiFetch<{
-        provider: string;
-        url?: string;
-        sessionId?: string;
-        checkoutSessionId?: string;
-        intentId?: string;
-        reference?: string;
-        recipient?: string;
-        mint?: string;
-        amountBaseUnits?: string;
-        amountDisplay?: string;
-        currency?: string;
-        expiry?: string;
-        instructions?: string[];
-        note?: string;
-      }>("/api/billing/checkout-sessions", {
+      const res = await apiFetch<UsdcIntent | SolIntent>("/api/billing/checkout-sessions", {
         method: "POST",
         body: JSON.stringify({ planCode: "plus", provider }),
       });
-      if (provider === "stripe" && res.url) {
-        // Redirect to Stripe-hosted checkout
-        toast.info("Redirecting to Stripe…", { description: "Entitlement is granted only after the verified webhook confirms payment." });
-        window.location.href = res.url;
-        return;
-      }
-      if (provider === "usdc" && res.intentId) {
-        setUsdcIntent({
-          intentId: res.intentId,
-          reference: res.reference!,
-          recipient: res.recipient!,
-          mint: res.mint!,
-          amountBaseUnits: res.amountBaseUnits!,
-          amountDisplay: res.amountDisplay!,
-          currency: res.currency!,
-          expiry: res.expiry!,
-          instructions: res.instructions!,
-        });
-        setCheckoutOpen(true);
+      if ("amountDisplay" in res) {
+        setUsdcIntent(res);
+        setSolIntent(null);
+        setSheetKind("usdc");
+      } else {
+        setSolIntent(res);
+        setUsdcIntent(null);
+        setSheetKind("sol");
       }
     } catch (e) {
       const err = e as Error & { code?: string };
-      toast.error(err.message);
+      toast.error(err.message, { description: err.code === "SOL_PRICE_UNAVAILABLE" ? "Try USDC instead — it's price-stable." : undefined });
     } finally {
-      setCreatingCheckout(false);
+      setCreatingCheckout(null);
     }
   }
 
-  async function verifyUsdc() {
-    if (!usdcIntent || !usdcSignature) {
+  async function verifyPayment() {
+    const intentId = sheetKind === "usdc" ? usdcIntent?.intentId : solIntent?.intentId;
+    if (!intentId) return;
+    if (!signature.trim()) {
       toast.error("Paste the transaction signature first.");
       return;
     }
-    setUsdcVerifying(true);
+    setVerifying(true);
     try {
-      const res = await apiFetch<{
-        verified: boolean;
-        finalized: boolean;
-        signature: string;
-        note: string;
-      }>("/api/billing/usdc/verify-payment", {
-        method: "POST",
-        body: JSON.stringify({
-          intentId: usdcIntent.intentId,
-          signature: usdcSignature,
-        }),
-      });
-      toast.success("USDC payment verified. Rillio Plus is active.");
-      setCheckoutOpen(false);
+      const res = await apiFetch<{ verified: boolean; finalized: boolean; signature: string; note: string }>(
+        sheetKind === "usdc" ? "/api/billing/usdc/verify-payment" : "/api/billing/sol/verify-payment",
+        { method: "POST", body: JSON.stringify({ intentId, signature: signature.trim() }) }
+      );
+      toast.success("Payment verified onchain. Rillio Plus is active.");
+      setSheetKind(null);
       setUsdcIntent(null);
-      setUsdcSignature("");
+      setSolIntent(null);
+      setSignature("");
       load();
     } catch (e) {
-      const err = e as Error & { code?: string; retryable?: boolean };
-      toast.error(err.message, { description: err.retryable ? "You can retry once the transaction confirms." : undefined });
+      const err = e as Error & { retryable?: boolean };
+      toast.error(err.message, { description: err.retryable ? "Retry once the transaction confirms onchain." : undefined });
     } finally {
-      setUsdcVerifying(false);
+      setVerifying(false);
     }
   }
 
   async function cancelSubscription() {
     try {
       await apiFetch("/api/billing/cancel", { method: "POST" });
-      toast.success("Subscription will cancel at period end.");
+      toast.success("Subscription will end at period close.");
       load();
     } catch (e) {
       toast.error("Failed to cancel.");
@@ -182,7 +173,7 @@ export function BillingView() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 max-w-4xl">
         <Skeleton className="h-12 w-72 bg-ink-700 rounded-2xl" />
         <Skeleton className="h-64 w-full bg-ink-700 rounded-2xl" />
       </div>
@@ -198,11 +189,11 @@ export function BillingView() {
       <div>
         <h1 className="font-display text-3xl font-semibold">Billing</h1>
         <p className="text-sm text-slate-400 mt-1">
-          Plans, checkout, invoices. Entitlement is reconciled server-side only after verified payment.
+          Solana-native payments — USDC or native SOL. Entitlement unlocks only after onchain verification.
         </p>
       </div>
 
-      {/* Current subscription */}
+      {/* Active subscription */}
       {data?.subscription && hasPlus && (
         <Card className="bg-mint-400/5 border-mint-400/30">
           <CardContent className="p-5 flex flex-wrap items-center justify-between gap-3">
@@ -214,7 +205,7 @@ export function BillingView() {
                 <div className="font-display text-base font-medium">Rillio Plus is active</div>
                 <div className="text-xs text-slate-400">
                   {data.subscription.currentPeriodEnd && <>Renews {new Date(data.subscription.currentPeriodEnd).toLocaleDateString()} · </>}
-                  via {data.subscription.provider}
+                  paid via {data.subscription.provider.toUpperCase()} on Solana
                 </div>
               </div>
             </div>
@@ -227,7 +218,6 @@ export function BillingView() {
 
       {/* Plans */}
       <div className="grid gap-4 sm:grid-cols-2">
-        {/* Free */}
         <Card className={`bg-ink-800 border-white/10 ${!hasPlus ? "border-mint-400/40" : ""}`}>
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
@@ -236,7 +226,6 @@ export function BillingView() {
             </div>
             <div className="num font-display text-3xl font-semibold mt-3">$0<span className="text-sm text-slate-400 font-sans">/mo</span></div>
             <p className="text-xs text-slate-400 mt-1">{freePlan?.description}</p>
-
             <ul className="mt-4 space-y-2 text-sm">
               <FeatureRow label="CSV imports" value="up to 1,000 rows" />
               <FeatureRow label="Goals" value="up to 3" />
@@ -246,44 +235,39 @@ export function BillingView() {
           </CardContent>
         </Card>
 
-        {/* Plus */}
         <Card className={`bg-ink-800 border-white/10 relative overflow-hidden ${hasPlus ? "border-mint-400/40" : "ring-1 ring-lime-400/30"}`}>
           <div className="absolute top-0 right-0 px-3 py-1 text-[10px] font-medium gradient-brand text-ink-950 rounded-bl-lg">PLUS</div>
           <CardContent className="p-6">
             <div className="font-display text-xl font-semibold">Rillio Plus</div>
-            <div className="num font-display text-3xl font-semibold mt-3">
-              ${plusPlan ? formatMinor(BigInt(plusPlan.priceMinor), plusPlan.currency).replace(/\.\d+$/, "") : "8"}<span className="text-sm text-slate-400 font-sans">/mo</span>
-            </div>
+            <div className="num font-display text-3xl font-semibold mt-3">$8<span className="text-sm text-slate-400 font-sans">/mo</span></div>
             <p className="text-xs text-slate-400 mt-1">{plusPlan?.description}</p>
-
             <ul className="mt-4 space-y-2 text-sm">
               <FeatureRow label="CSV imports" value="up to 100,000 rows" highlight />
               <FeatureRow label="Multi-account + multi-currency" value="included" highlight />
-              <FeatureRow label="Recurring detection" value="included" highlight />
-              <FeatureRow label="Custom rules" value="included" highlight />
+              <FeatureRow label="Recurring detection + custom rules" value="included" highlight />
               <FeatureRow label="Goals" value="up to 50" highlight />
-              <FeatureRow label="Scenario planning" value="included" highlight />
-              <FeatureRow label="Exports + portfolio analytics" value="included" highlight />
+              <FeatureRow label="Scenario planning + exports" value="included" highlight />
+              <FeatureRow label="Portfolio analytics" value="included" highlight />
             </ul>
 
             {!hasPlus && (
-              <div className="mt-5 space-y-2">
-                <Button
-                  onClick={() => startCheckout("stripe")}
-                  disabled={creatingCheckout}
-                  className="w-full bg-lime-400 text-ink-950 hover:bg-lime-400/90"
-                >
-                  <CreditCard size={14} className="mr-1.5" />
-                  {creatingCheckout ? "Starting…" : "Subscribe with card"}
-                </Button>
+              <div className="mt-5 grid grid-cols-2 gap-2">
                 <Button
                   onClick={() => startCheckout("usdc")}
-                  disabled={creatingCheckout}
-                  variant="outline"
-                  className="w-full border-white/10"
+                  disabled={creatingCheckout !== null}
+                  className="bg-lime-400 text-ink-950 hover:bg-lime-400/90 font-semibold"
                 >
                   <Coins size={14} className="mr-1.5" />
-                  Pay with USDC
+                  {creatingCheckout === "usdc" ? "…" : "USDC"}
+                </Button>
+                <Button
+                  onClick={() => startCheckout("sol")}
+                  disabled={creatingCheckout !== null}
+                  variant="outline"
+                  className="border-white/10 font-semibold"
+                >
+                  <WalletIcon size={14} className="mr-1.5" />
+                  {creatingCheckout === "sol" ? "…" : "SOL"}
                 </Button>
               </div>
             )}
@@ -291,73 +275,59 @@ export function BillingView() {
         </Card>
       </div>
 
-      {/* Boundary states */}
-      {data && !hasPlus && (
+      {/* Payment provider status */}
+      {!hasPlus && data && (
         <Card className="bg-ink-800 border-white/10">
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2"><ShieldIcon size={16} className="text-mint-400" /> Payment provider status</CardTitle>
+            <CardTitle className="text-base flex items-center gap-2"><ShieldIcon size={16} className="text-mint-400" /> Payment protocol status</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div className="rounded-lg p-3 bg-ink-850 border border-white/5 flex items-start gap-2">
-              <CreditCard size={14} className="text-slate-400 flex-shrink-0 mt-0.5" />
+              <Coins size={14} className="text-aqua-400 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-300">Stripe (card checkout)</span>
-                  <Badge variant="outline" className={
-                    data.stripe.configured
-                      ? data.stripe.mode === "live" ? "border-mint-400/30 text-mint-400" : "border-warning-500/30 text-warning-500"
-                      : "border-slate-500/30 text-slate-400"
-                  }>
-                    {data.stripe.configured ? data.stripe.mode : "disabled"}
+                  <span className="text-slate-300">USDC (SPL token, mainnet)</span>
+                  <Badge variant="outline" className={data.payments.usdcConfigured ? "border-mint-400/30 text-mint-400" : "border-slate-500/30 text-slate-400"}>
+                    {data.payments.usdcConfigured ? "ready" : "unconfigured"}
                   </Badge>
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  {data.stripe.configured
-                    ? "Stripe is configured. Checkout creates a Stripe-hosted session; entitlement is granted only after the verified webhook confirms payment."
-                    : "Stripe is not configured in this environment. Set STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_PLUS_PRICE_ID and STRIPE_WEBHOOK_SECRET to enable card checkout."}
+                  Exact $8.00 in 6-decimal base units. Server verifies mint, amount, recipient, reference and finality.
                 </p>
               </div>
             </div>
-
             <div className="rounded-lg p-3 bg-ink-850 border border-white/5 flex items-start gap-2">
-              <Coins size={14} className="text-slate-400 flex-shrink-0 mt-0.5" />
+              <WalletIcon size={14} className="text-violet-400 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-300">USDC (onchain payment)</span>
-                  <Badge variant="outline" className={
-                    plusPlan?.usdcRecipient
-                      ? "border-mint-400/30 text-mint-400"
-                      : "border-slate-500/30 text-slate-400"
-                  }>
-                    {plusPlan?.usdcRecipient ? "ready" : "unconfigured"}
+                  <span className="text-slate-300">Native SOL (Solana Pay reference)</span>
+                  <Badge variant="outline" className={data.payments.solConfigured ? "border-mint-400/30 text-mint-400" : "border-slate-500/30 text-slate-400"}>
+                    {data.payments.solConfigured ? "ready" : "unconfigured"}
                   </Badge>
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  {plusPlan?.usdcRecipient
-                    ? "Pay $8 USDC on Solana. Server verifies the signature, exact amount, mint, recipient and reference onchain before granting entitlement."
-                    : "Set USDC_RECIPIENT_WALLET and SOLANA_RPC_URL in the environment to enable USDC checkout."}
+                  Quoted at a live oracle price at intent creation; lamports verified via balance deltas. If no price source is available, no quote is issued — honestly.
                 </p>
               </div>
             </div>
-
             <div className="rounded-lg p-3 bg-warning-500/10 border border-warning-500/30 text-xs text-slate-300 flex items-start gap-2">
               <AlertCircle size={12} className="text-warning-500 flex-shrink-0 mt-0.5" />
               <span>
-                <strong className="text-warning-500">Important:</strong> Browser redirects never grant entitlement. The success_url after Stripe checkout is informational only — your Plus access activates only when the verified webhook fires and reconciles your subscription server-side.
+                <strong className="text-warning-500">How access works:</strong> you send the transfer from your own wallet, paste the transaction signature, and the server checks it onchain before Plus unlocks. Rillio never sees your keys and holds nothing.
               </span>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Entitlements (current) */}
+      {/* Entitlements */}
       <Card className="bg-ink-800 border-white/10">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2"><SourceIcon size={16} /> Your entitlements</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid gap-2 sm:grid-cols-2 text-sm">
-            {data && Object.entries(data.entitlements).slice(0, 8).map(([k, v]) => (
+            {data && Object.entries(data.entitlements).slice(0, 10).map(([k, v]) => (
               <div key={k} className="flex items-center justify-between rounded p-2 bg-ink-850 border border-white/5">
                 <span className="text-slate-300 text-xs">{k.replace(/_/g, " ")}</span>
                 <span className="num text-paper-100 text-xs">{v}</span>
@@ -368,58 +338,152 @@ export function BillingView() {
       </Card>
 
       {/* USDC payment sheet */}
-      <Sheet open={checkoutOpen} onOpenChange={setCheckoutOpen}>
+      <Sheet open={sheetKind === "usdc"} onOpenChange={(o) => !o && setSheetKind(null)}>
         <SheetContent className="bg-ink-900 border-white/10 text-paper-100 w-full sm:max-w-lg overflow-y-auto">
           {usdcIntent && (
-            <>
-              <SheetHeader>
-                <SheetTitle className="font-display">Pay with USDC</SheetTitle>
-                <SheetDescription className="text-slate-300">
-                  Send exactly {usdcIntent.amountDisplay} USDC on Solana with the reference included.
-                </SheetDescription>
-              </SheetHeader>
-              <div className="mt-6 space-y-4">
-                <div className="rounded-lg p-4 bg-ink-850 border border-white/5 space-y-2">
-                  <Row label="Recipient" value={usdcIntent.recipient} mono copyable />
-                  <Row label="Amount" value={`${usdcIntent.amountDisplay} USDC`} mono />
-                  <Row label="Reference" value={usdcIntent.reference} mono copyable />
-                  <Row label="Network" value="Solana mainnet" />
-                  <Row label="Expires" value={new Date(usdcIntent.expiry).toLocaleString()} />
-                </div>
+            <SolanaPaymentSheet
+              title="Pay with USDC"
+              description={`Send exactly ${usdcIntent.amountDisplay} USDC on Solana with the reference included.`}
+              rows={[
+                { label: "Recipient", value: usdcIntent.recipient, mono: true, copyable: true },
+                { label: "Amount", value: `${usdcIntent.amountDisplay} USDC (${usdcIntent.amountBaseUnits} base units)`, mono: true, copyable: true },
+                { label: "Reference", value: usdcIntent.reference, mono: true, copyable: true },
+                { label: "Mint", value: usdcIntent.mint, mono: true, copyable: true },
+                { label: "Network", value: "Solana mainnet" },
+                { label: "Expires", value: new Date(usdcIntent.expiry).toLocaleString() },
+              ]}
+              instructions={usdcIntent.instructions}
+              note={usdcIntent.note ?? "Read-only verification. Rillio never sees your private keys."}
+              signature={signature}
+              onSignatureChange={setSignature}
+              onVerify={verifyPayment}
+              verifying={verifying}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
 
-                <div className="rounded-lg p-3 bg-mint-400/10 border border-mint-400/30 text-xs text-slate-300">
-                  <strong className="text-mint-400">Read-only verification.</strong> Rillio never sees your private keys. The server verifies the onchain signature, exact amount, mint, recipient and reference after you submit the transfer.
-                </div>
-
-                <ol className="text-xs text-slate-400 space-y-1 list-decimal pl-4">
-                  {usdcIntent.instructions.map((i, idx) => <li key={idx}>{i}</li>)}
-                </ol>
-
-                <div className="space-y-2">
-                  <Label htmlFor="sig">Transaction signature</Label>
-                  <Input
-                    id="sig"
-                    value={usdcSignature}
-                    onChange={(e) => setUsdcSignature(e.target.value)}
-                    placeholder="Paste the transaction signature after you submit the transfer"
-                    className="bg-ink-850 border-white/10 font-mono text-xs"
-                  />
-                  <p className="text-[11px] text-slate-500">Wait for confirmation on Solana before verifying. The server checks finality onchain.</p>
-                </div>
-
-                <Button
-                  onClick={verifyUsdc}
-                  disabled={!usdcSignature || usdcVerifying}
-                  className="w-full bg-lime-400 text-ink-950 hover:bg-lime-400/90"
-                >
-                  {usdcVerifying ? <><RefreshCw size={14} className="mr-1.5 animate-spin" /> Verifying onchain…</> : "Verify payment"}
-                </Button>
-              </div>
-            </>
+      {/* SOL payment sheet */}
+      <Sheet open={sheetKind === "sol"} onOpenChange={(o) => !o && setSheetKind(null)}>
+        <SheetContent className="bg-ink-900 border-white/10 text-paper-100 w-full sm:max-w-lg overflow-y-auto">
+          {solIntent && (
+            <SolanaPaymentSheet
+              title="Pay with native SOL"
+              description={`Send exactly ${solIntent.solAmount} SOL (quoted at $${solIntent.quotedSolPrice.toFixed(2)}/SOL) with the Solana Pay reference.`}
+              rows={[
+                { label: "Recipient", value: solIntent.recipient, mono: true, copyable: true },
+                { label: "Amount", value: `${solIntent.solAmount} SOL (${solIntent.lamports} lamports)`, mono: true, copyable: true },
+                { label: "Reference", value: solIntent.reference, mono: true, copyable: true },
+                { label: "Quoted price", value: `$${solIntent.quotedSolPrice.toFixed(2)} / SOL — ${solIntent.pricingMode === "oracle" ? "live oracle" : "operator-fixed rate (live sources unreachable, transparently recorded)"}` },
+                { label: "Expires", value: new Date(solIntent.expiry).toLocaleString() },
+              ]}
+              solanaPayUrl={solIntent.solanaPayUrl}
+              instructions={solIntent.instructions}
+              note={solIntent.note ?? "Server verifies exact lamports via balance deltas, recipient and reference onchain."}
+              signature={signature}
+              onSignatureChange={setSignature}
+              onVerify={verifyPayment}
+              verifying={verifying}
+            />
           )}
         </SheetContent>
       </Sheet>
     </div>
+  );
+}
+
+/* --------------------------- Shared payment sheet --------------------------- */
+
+function SolanaPaymentSheet({
+  title,
+  description,
+  rows,
+  instructions,
+  note,
+  signature,
+  onSignatureChange,
+  onVerify,
+  verifying,
+  solanaPayUrl,
+}: {
+  title: string;
+  description: string;
+  rows: Array<{ label: string; value: string; mono?: boolean; copyable?: boolean }>;
+  instructions: string[];
+  note: string;
+  signature: string;
+  onSignatureChange: (v: string) => void;
+  onVerify: () => void;
+  verifying: boolean;
+  solanaPayUrl?: string;
+}) {
+  return (
+    <>
+      <SheetHeader>
+        <SheetTitle className="font-display">{title}</SheetTitle>
+        <SheetDescription className="text-slate-300">{description}</SheetDescription>
+      </SheetHeader>
+      <div className="mt-6 space-y-4">
+        <div className="rounded-lg p-4 bg-ink-850 border border-white/5 space-y-2">
+          {rows.map((r) => (
+            <Row key={r.label} label={r.label} value={r.value} mono={r.mono} copyable={r.copyable} />
+          ))}
+        </div>
+
+        {solanaPayUrl && (
+          <div className="rounded-lg p-3 bg-violet-400/10 border border-violet-400/30">
+            <div className="text-xs text-violet-400 font-medium mb-1.5 flex items-center gap-1.5">
+              <Link2 size={12} /> Solana Pay transfer link
+            </div>
+            <p className="text-[11px] text-slate-400 break-all font-mono leading-relaxed">{solanaPayUrl}</p>
+            <div className="mt-2 flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 border-white/10 text-xs"
+                onClick={() => { navigator.clipboard.writeText(solanaPayUrl); toast.success("Solana Pay link copied"); }}
+              >
+                <Copy size={12} className="mr-1" /> Copy link
+              </Button>
+              <a
+                href={solanaPayUrl}
+                className="h-8 px-3 rounded-md border border-white/10 text-xs inline-flex items-center hover:bg-white/5 transition-colors"
+              >
+                Open in wallet
+              </a>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-lg p-3 bg-mint-400/10 border border-mint-400/30 text-xs text-slate-300">
+          <strong className="text-mint-400">Read-only verification.</strong> {note}
+        </div>
+
+        <ol className="text-xs text-slate-400 space-y-1 list-decimal pl-4">
+          {instructions.map((i, idx) => <li key={idx}>{i}</li>)}
+        </ol>
+
+        <div className="space-y-2">
+          <Label htmlFor="paysig">Transaction signature</Label>
+          <Input
+            id="paysig"
+            value={signature}
+            onChange={(e) => onSignatureChange(e.target.value)}
+            placeholder="Paste the transaction signature after sending"
+            className="bg-ink-850 border-white/10 font-mono text-xs"
+          />
+          <p className="text-[11px] text-slate-500">Wait for confirmation on Solana before verifying — the server checks finality onchain.</p>
+        </div>
+
+        <Button
+          onClick={onVerify}
+          disabled={!signature.trim() || verifying}
+          className="w-full bg-lime-400 text-ink-950 hover:bg-lime-400/90 font-semibold"
+        >
+          {verifying ? <><RefreshCw size={14} className="mr-1.5 animate-spin" /> Verifying onchain…</> : "Verify payment"}
+        </Button>
+      </div>
+    </>
   );
 }
 
@@ -445,7 +509,7 @@ function Row({ label, value, mono, copyable }: { label: string; value: string; m
             className="text-slate-500 hover:text-mint-400 flex-shrink-0"
             aria-label="Copy"
           >
-            <ExternalLink size={10} />
+            <Copy size={10} />
           </button>
         )}
       </div>

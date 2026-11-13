@@ -23,7 +23,6 @@
 import { db } from "@/lib/db";
 import { checkSolanaBoundary } from "@/lib/solana";
 import { getConfirmedTransaction, getSignatureStatus } from "@/lib/solana-rpc";
-import { syncEntitlements } from "@/lib/billing/entitlements";
 
 // Solana mainnet USDC mint
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -197,47 +196,22 @@ export async function verifyUsdcPayment(opts: {
 }
 
 /**
- * After a USDC payment is verified, sync entitlements and create subscription.
+ * After a USDC payment is verified, settle subscription via shared settle.ts.
  */
 export async function settleUsdcSubscription(opts: { intentId: string; signature: string }) {
   const intent = await db.paymentIntent.findUnique({ where: { id: opts.intentId } });
   if (!intent) throw new Error("Intent not found");
-  // Find the plan by amount match (Plus monthly = 800 cents = 800 USDC base units * 100 — wait, USDC has 6 decimals, $8 = 8_000_000)
   const plan = await db.plan.findFirst({ where: { code: "plus" } });
   if (!plan) throw new Error("Plus plan not found");
-
-  const sub = await db.subscription.create({
-    data: {
-      userId: intent.userId,
-      planId: plan.id,
-      provider: "usdc",
-      externalId: opts.signature,
-      status: "active",
-      currentPeriodStart: new Date(),
-      currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
-    },
+  const { settleSubscription } = await import("./settle");
+  const res = await settleSubscription({
+    userId: intent.userId,
+    planCode: plan.code,
+    provider: "usdc",
+    signature: opts.signature,
+    amountMinor: intent.amountMinor.toString(),
+    currency: "USDC",
+    intentId: intent.id,
   });
-  await db.invoice.create({
-    data: {
-      userId: intent.userId,
-      subscriptionId: sub.id,
-      providerInvoiceId: opts.signature,
-      amountMinor: intent.amountMinor,
-      currency: "USDC",
-      state: "paid",
-      paidAt: new Date(),
-    },
-  });
-  await syncEntitlements(intent.userId, sub.id, plan.code);
-  await db.auditEvent.create({
-    data: {
-      userId: intent.userId,
-      actor: "usdc_verifier",
-      action: "subscription_activated",
-      resourceType: "subscription",
-      resourceId: sub.id,
-      metadata: JSON.stringify({ intentId: intent.id, signature: opts.signature, provider: "usdc" }),
-    },
-  });
-  return sub;
+  return res.subscription;
 }

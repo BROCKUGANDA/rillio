@@ -3,11 +3,10 @@ import { getCurrentUser } from "@/lib/auth";
 import { makeError } from "@/lib/errors";
 import { db } from "@/lib/db";
 import { getActiveSubscription } from "@/lib/billing/entitlements";
-import { cancelSubscription } from "@/lib/billing/stripe";
 
 /**
- * GET /api/billing/subscription
- * Returns the user's current subscription + invoices.
+ * GET /api/billing/subscription — current subscription + invoices.
+ * POST /api/billing/subscription — cancel at period end (onchain subs).
  */
 export async function GET() {
   const user = await getCurrentUser();
@@ -28,19 +27,14 @@ export async function GET() {
       ...sub,
       plan: { ...sub.plan, priceMinor: sub.plan.priceMinor.toString() },
     },
-    invoices: invoices.map((i) => ({
-      ...i,
-      amountMinor: i.amountMinor.toString(),
-    })),
+    invoices: invoices.map((i) => ({ ...i, amountMinor: i.amountMinor.toString() })),
   });
 }
 
 /**
- * POST /api/billing/subscription/cancel (also handled at /api/billing/cancel)
- *
- * Cancels the subscription at period end. Calls Stripe to cancel.
- * The actual entitlement removal happens via the webhook when the
- * subscription actually ends — this request only schedules cancellation.
+ * Cancel at period end. For onchain subscriptions (usdc/sol) we mark
+ * cancel_at period end equivalent by setting cancelAt/canceledAt and
+ * allowing entitlements to lapse at currentPeriodEnd.
  */
 export async function POST() {
   const user = await getCurrentUser();
@@ -51,39 +45,25 @@ export async function POST() {
   if (!sub) {
     return NextResponse.json(makeError("NO_SUBSCRIPTION", "No subscription", "You don't have an active subscription.", 404), { status: 404 });
   }
-  if (sub.provider === "stripe" && sub.externalId) {
-    const result = await cancelSubscription(sub.externalId);
-    if ("error" in result) {
-      return NextResponse.json(makeError("STRIPE_CANCEL_FAILED", "Cancellation failed", result.error, 502), { status: 502 });
-    }
-    await db.subscription.update({
-      where: { id: sub.id },
-      data: {
-        cancelAt: result.cancel_at ? new Date(result.cancel_at * 1000) : null,
-        status: result.status,
-      },
-    });
-    await db.auditEvent.create({
-      data: {
-        userId: user.id,
-        actor: user.id,
-        action: "subscription_cancel_scheduled",
-        resourceType: "subscription",
-        resourceId: sub.id,
-        reason: "User-initiated cancellation",
-        metadata: JSON.stringify({ cancelAt: result.cancel_at }),
-      },
-    });
-    return NextResponse.json({
-      ok: true,
-      cancelAt: result.cancel_at ? new Date(result.cancel_at * 1000).toISOString() : null,
-      note: "Subscription will cancel at period end. Entitlements remain active until then.",
-    });
-  }
-  // USDC or other — cancel immediately
+  const periodEnd = sub.currentPeriodEnd ?? new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
   await db.subscription.update({
     where: { id: sub.id },
-    data: { status: "canceled", canceledAt: new Date() },
+    data: { cancelAt: periodEnd, status: "active" },
   });
-  return NextResponse.json({ ok: true, note: "Subscription canceled." });
+  await db.auditEvent.create({
+    data: {
+      userId: user.id,
+      actor: user.id,
+      action: "subscription_cancel_scheduled",
+      resourceType: "subscription",
+      resourceId: sub.id,
+      reason: "User-initiated cancellation",
+      metadata: JSON.stringify({ cancelAt: periodEnd.toISOString() }),
+    },
+  });
+  return NextResponse.json({
+    ok: true,
+    cancelAt: periodEnd.toISOString(),
+    note: "Subscription will end at period close. Entitlements remain active until then.",
+  });
 }

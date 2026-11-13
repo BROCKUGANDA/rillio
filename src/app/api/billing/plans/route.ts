@@ -3,11 +3,11 @@ import { getCurrentUser } from "@/lib/auth";
 import { makeError } from "@/lib/errors";
 import { db } from "@/lib/db";
 import { seedPlans, getEntitlements, getActiveSubscription } from "@/lib/billing/entitlements";
-import { getStripeConfig } from "@/lib/billing/stripe";
 
 /**
  * GET /api/billing/plans
  * Returns available plans + the user's current subscription + entitlements.
+ * Solana-only payments (USDC + native SOL).
  */
 export async function GET() {
   const user = await getCurrentUser();
@@ -15,11 +15,10 @@ export async function GET() {
     return NextResponse.json(makeError("AUTH_REQUIRED", "Authentication required", "Sign in to continue.", 401), { status: 401 });
   }
   await seedPlans();
-  const [plans, subscription, entitlements, stripeConfig] = await Promise.all([
+  const [plans, subscription, entitlements] = await Promise.all([
     db.plan.findMany({ where: { isActive: true }, orderBy: { priceMinor: "asc" } }),
     getActiveSubscription(user.id),
     getEntitlements(user.id),
-    getStripeConfig(),
   ]);
   return NextResponse.json({
     plans: plans.map((p) => ({
@@ -34,6 +33,12 @@ export async function GET() {
         }
       : null,
     entitlements,
-    stripe: stripeConfig,
+    payments: {
+      protocol: "solana-pay",
+      providers: ["usdc", "sol"],
+      usdcConfigured: plans.find((p) => p.code === "plus")?.usdcRecipient != null,
+      solConfigured: plans.find((p) => p.code === "plus")?.solRecipient != null,
+      note: "Onchain payments only. Entitlement is granted solely after server-side verification of the transfer (exact amount, recipient, reference, finality).",
+    },
   });
 }

@@ -412,8 +412,9 @@ model Plan {
   interval        String   @default("month") // month | year
   featuresJson    String   // JSON-encoded feature list
   isActive        Boolean  @default(true)
-  stripePriceId   String?
-  usdcRecipient   String?  // for USDC checkout
+  stripePriceId   String?  // legacy, unused (Stripe removed)
+  usdcRecipient   String?  // USDC treasury wallet for onchain checkout
+  solRecipient    String?  // SOL treasury wallet for native-SOL checkout
   createdAt       DateTime @default(now())
 
   subscriptions   Subscription[]

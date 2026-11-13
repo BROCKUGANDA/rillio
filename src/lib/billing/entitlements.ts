@@ -52,37 +52,51 @@ export const PLAN_FEATURES: Record<string, Partial<Record<EntitlementFeature, st
 };
 
 /**
- * Seed the default plans if they don't exist.
+ * Seed the default plans if they don't exist, and backfill recipients
+ * for plans seeded before the Solana-only billing migration.
  */
 export async function seedPlans() {
   const existing = await db.plan.count();
-  if (existing > 0) return;
-  await db.plan.createMany({
-    data: [
-      {
-        code: "free",
-        name: "Free",
-        description: "One workspace, basic insights, read-only wallet.",
-        priceMinor: 0n,
-        currency: "USD",
-        interval: "month",
-        featuresJson: JSON.stringify(PLAN_FEATURES.free),
-        isActive: true,
+  if (existing === 0) {
+    await db.plan.createMany({
+      data: [
+        {
+          code: "free",
+          name: "Free",
+          description: "One workspace, basic insights, read-only wallet.",
+          priceMinor: 0n,
+          currency: "USD",
+          interval: "month",
+          featuresJson: JSON.stringify(PLAN_FEATURES.free),
+          isActive: true,
+        },
+        {
+          code: "plus",
+          name: "Rillio Plus",
+          description: "Higher limits, multi-account, recurring detection, custom rules, scenarios, exports.",
+          priceMinor: 800n, // $8.00/month in cents
+          currency: "USD",
+          interval: "month",
+          featuresJson: JSON.stringify(PLAN_FEATURES.plus),
+          isActive: true,
+          usdcRecipient: process.env.USDC_RECIPIENT_WALLET || null,
+          solRecipient: process.env.SOL_RECIPIENT_WALLET || process.env.USDC_RECIPIENT_WALLET || null,
+        },
+      ],
+    });
+    return;
+  }
+  // Backfill recipients for plans seeded before the Solana-only billing migration
+  const plus = await db.plan.findUnique({ where: { code: "plus" } });
+  if (plus && (!plus.usdcRecipient || !plus.solRecipient)) {
+    await db.plan.update({
+      where: { id: plus.id },
+      data: {
+        usdcRecipient: plus.usdcRecipient ?? process.env.USDC_RECIPIENT_WALLET ?? null,
+        solRecipient: plus.solRecipient ?? process.env.SOL_RECIPIENT_WALLET ?? process.env.USDC_RECIPIENT_WALLET ?? null,
       },
-      {
-        code: "plus",
-        name: "Rillio Plus",
-        description: "Higher limits, multi-account, recurring detection, custom rules, scenarios, exports.",
-        priceMinor: 800n, // $8.00/month in cents
-        currency: "USD",
-        interval: "month",
-        featuresJson: JSON.stringify(PLAN_FEATURES.plus),
-        isActive: true,
-        stripePriceId: process.env.STRIPE_PLUS_PRICE_ID || null,
-        usdcRecipient: process.env.USDC_RECIPIENT_WALLET || null,
-      },
-    ],
-  });
+    });
+  }
 }
 
 /**

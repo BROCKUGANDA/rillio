@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { motion, useReducedMotion, animate } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -133,6 +134,7 @@ export function HomeView({
       {/* Top metrics row */}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         <MetricCard
+          index={0}
           label="Inflow"
           value={summary ? formatMinor(BigInt(summary.inflowMinor), currency, { signed: false }) : null}
           icon={<FlowIcon />}
@@ -140,6 +142,7 @@ export function HomeView({
           loading={loading}
         />
         <MetricCard
+          index={1}
           label="Outflow"
           value={summary ? formatMinor(BigInt(summary.outflowMinor), currency, { signed: false }) : null}
           icon={<FlowIcon className="rotate-180" />}
@@ -147,6 +150,7 @@ export function HomeView({
           loading={loading}
         />
         <MetricCard
+          index={2}
           label="Net flow"
           value={summary ? formatMinor(BigInt(summary.netMinor), currency, { signed: true }) : null}
           icon={<PulseIcon />}
@@ -154,6 +158,7 @@ export function HomeView({
           loading={loading}
         />
         <MetricCard
+          index={3}
           label="Transactions"
           value={summary ? String(summary.totalTransactions) : null}
           icon={<SparkIcon />}
@@ -396,33 +401,45 @@ export function HomeView({
   );
 }
 
+const STAGGER = { duration: 0.5, ease: [0.2, 0.8, 0.2, 1] as const };
+
 function MetricCard({
   label,
   value,
   icon,
   tone,
   loading,
+  index = 0,
 }: {
   label: string;
   value: string | null;
   icon: React.ReactNode;
   tone: "positive" | "negative" | "neutral";
   loading: boolean;
+  index?: number;
 }) {
   const colorClass =
     tone === "positive" ? "text-mint-400" : tone === "negative" ? "text-danger-500" : "text-paper-100";
+  const reduce = useReducedMotion();
   return (
-    <Card className="bg-ink-800 border-white/10">
-      <CardContent className="p-5">
-        <div className="flex items-center justify-between">
-          <div className="text-xs text-slate-400">{label}</div>
-          <div className={colorClass}>{icon}</div>
-        </div>
-        <div className={`num font-display text-2xl font-semibold mt-2 ${colorClass}`}>
-          {loading ? <Skeleton className="h-7 w-24 bg-ink-700" /> : value ?? "—"}
-        </div>
-      </CardContent>
-    </Card>
+    <motion.div
+      initial={reduce ? { opacity: 0 } : { opacity: 0, y: 18, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ ...STAGGER, delay: index * 0.07 }}
+      whileHover={reduce ? undefined : { y: -3 }}
+    >
+      <Card className="bg-ink-800 border-white/10 h-full">
+        <CardContent className="p-5">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-slate-400">{label}</div>
+            <div className={colorClass}>{icon}</div>
+          </div>
+          <div className={`num font-display text-2xl font-semibold mt-2 ${colorClass}`}>
+            {loading ? <Skeleton className="h-7 w-24 bg-ink-700" /> : value ?? "—"}
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
   );
 }
 
