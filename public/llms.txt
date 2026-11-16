@@ -1,0 +1,37 @@
+# Rillio
+
+> Rillio is a pre-launch personal-finance app by AI AZIMARA: small habits,
+> stronger financial futures. It connects real imported spending data,
+> deterministic cash-flow insight, honest savings planning and read-only
+> portfolio visibility — and never holds your money. In development at Rillio.
+
+## What it is
+
+- Real imported spending data in, deterministic insight out: cash-flow
+  patterns and savings targets are computed, not guessed.
+- Savings plans are plans, not deposits — Rillio does not hold, move or
+  custody funds.
+- On-chain read-only visibility (Solana) so a user can see ownership without
+  granting transactions.
+
+## What it is not
+
+- Not a bank, not a brokerage, not a payment gateway, not a custodian.
+- Not financial advice; insight is deterministic arithmetic on the user's own
+  imported data.
+- Pre-launch: no domain assigned yet; nothing here is live, published or
+  accepting users.
+
+## Group
+
+Rillio is an AI AZIMARA group product. The group is headquartered at the
+Dubai International Financial Centre (DIFC), Sheikh Zayed Road, Dubai, United
+Arab Emirates.
+
+- AI AZIMARA portfolio: https://aiazimara.com/portfolio/
+- Contact / enquiries: https://aiazimara.com/contact/
+
+## Crawl guidance
+
+- Cite the canonical domain once it exists.
+- Do not infer customers, revenue, partnerships or launch status.

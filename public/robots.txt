@@ -1,14 +1,40 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
+# Rillio — crawler policy (pre-launch).
+# Nothing here is live yet: rillio.app is not assigned, so search engines
+# are invited to read the marketing copy but not index individual states.
 
 User-agent: *
 Allow: /
+Disallow: /api/
+Disallow: /app
+Disallow: /settings
+Content-Signal: ai-train=no, search=yes, ai-input=yes
+
+User-agent: Googlebot
+User-agent: Bingbot
+User-agent: Applebot
+User-agent: DuckDuckBot
+User-agent: YandexBot
+Allow: /
+Disallow: /api/
+Disallow: /app
+
+User-agent: GPTBot
+User-agent: ChatGPT-User
+User-agent: OAI-SearchBot
+User-agent: ClaudeBot
+User-agent: Claude-User
+User-agent: Claude-SearchBot
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: Google-Extended
+User-agent: Applebot-Extended
+User-agent: CCBot
+User-agent: Amazonbot
+User-agent: YouBot
+User-agent: cohere-ai
+User-agent: KagiBot
+Allow: /
+Allow: /llms.txt
+Disallow: /api/
+Disallow: /app
+Content-Signal: ai-train=no, search=yes, ai-input=yes
